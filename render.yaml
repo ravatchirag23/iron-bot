@@ -6,3 +6,6 @@ services:
     startCommand: "python3 webhook_server.py"
     healthCheckPath: "/status"
     autoDeploy: true
+    envVars:
+      - key: TZ
+        value: Asia/Kolkata

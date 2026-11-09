@@ -1,0 +1,16 @@
+name: Market Hours Keep-Alive Ping
+
+on:
+  schedule:
+    # Runs every 10 minutes from 03:30 UTC to 10:30 UTC (09:00 AM to 04:00 PM IST) Mon-Fri
+    - cron: '*/10 3-10 * * 1-5'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Iron Bot on Render
+        run: |
+          echo "Pinging Iron Bot on Render to keep instance warm during market hours..."
+          curl -sS -f --max-time 30 https://iron-bot-yfo6.onrender.com/status || echo "Ping attempted"

@@ -7,6 +7,7 @@ import sqlite3
 import os
 from datetime import datetime, date
 from typing import Optional, Dict, Any, List
+import config
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "trades.db")
 
@@ -71,7 +72,7 @@ def log_event(event_type: str, details: str):
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO audit_logs (timestamp, event_type, details) VALUES (?, ?, ?)",
-        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), event_type, details)
+        (config.get_now_str_ist(), event_type, details)
     )
     conn.commit()
     conn.close()
@@ -92,12 +93,13 @@ def is_duplicate_alert(signal_type: str, debounce_seconds: int = 60) -> bool:
         return False
         
     last_time = datetime.strptime(row["timestamp"], "%Y-%m-%d %H:%M:%S")
-    elapsed = (datetime.now() - last_time).total_seconds()
+    now_naive = config.get_now_ist().replace(tzinfo=None)
+    elapsed = (now_naive - last_time).total_seconds()
     return elapsed < debounce_seconds
 
 def get_today_stats(today_str: Optional[str] = None) -> Dict[str, Any]:
     if not today_str:
-        today_str = date.today().strftime("%Y-%m-%d")
+        today_str = config.get_today_ist()
         
     conn = get_connection()
     cursor = conn.cursor()
@@ -118,8 +120,8 @@ def record_trade_entry(trade_data: Dict[str, Any]) -> int:
     conn = get_connection()
     cursor = conn.cursor()
     
-    today_str = date.today().strftime("%Y-%m-%d")
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    today_str = config.get_today_ist()
+    now_str = config.get_now_str_ist()
     
     cursor.execute("""
         INSERT INTO trades (
@@ -151,8 +153,8 @@ def record_trade_exit(trade_id: int, exit_price: float, exit_reason: str, pnl_po
     conn = get_connection()
     cursor = conn.cursor()
     
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    today_str = date.today().strftime("%Y-%m-%d")
+    now_str = config.get_now_str_ist()
+    today_str = config.get_today_ist()
     
     cursor.execute("""
         UPDATE trades SET
@@ -180,7 +182,7 @@ def record_trade_exit(trade_id: int, exit_price: float, exit_reason: str, pnl_po
 def lock_system_today(reason: str):
     conn = get_connection()
     cursor = conn.cursor()
-    today_str = date.today().strftime("%Y-%m-%d")
+    today_str = config.get_today_ist()
     cursor.execute("""
         UPDATE daily_tracker SET is_locked = 1, lock_reason = ? WHERE trade_date = ?
     """, (reason, today_str))

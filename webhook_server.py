@@ -164,7 +164,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
     def handle_reset(self):
         """Resets today's tracker for fresh testing."""
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = config.get_today_ist()
         conn = database.get_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM daily_tracker WHERE trade_date = ?", (today_str,))

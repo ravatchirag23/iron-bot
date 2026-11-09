@@ -18,7 +18,7 @@ def validate_signal_armor(signal_data: Dict[str, Any]) -> Tuple[bool, str]:
     Runs all 13 Iron Armor Rules.
     Returns (True, "APPROVED") or (False, "REJECTION_REASON").
     """
-    now = datetime.now()
+    now = config.get_now_ist()
     current_time = now.time()
     
     # 1. System Lock Check

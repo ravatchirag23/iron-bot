@@ -5,7 +5,24 @@ Mission: Steady Passive Income (15-20 pts) with Zero Overtrading
 """
 
 import os
-from datetime import time
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
+
+# Timezone standard: Indian Standard Time (Asia/Kolkata)
+# Guaranteed IST consistency on local Mac and Render Cloud (UTC containers)
+IST_TIMEZONE = ZoneInfo("Asia/Kolkata")
+
+def get_now_ist() -> datetime:
+    """Returns current datetime in Indian Standard Time (Asia/Kolkata)."""
+    return datetime.now(IST_TIMEZONE)
+
+def get_today_ist() -> str:
+    """Returns current date in YYYY-MM-DD in IST."""
+    return get_now_ist().strftime("%Y-%m-%d")
+
+def get_now_str_ist() -> str:
+    """Returns current timestamp string in YYYY-MM-DD HH:MM:SS in IST."""
+    return get_now_ist().strftime("%Y-%m-%d %H:%M:%S")
 
 # =====================================================================
 # 1. CORE OPERATIONAL MODES
