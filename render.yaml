@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: iron-bot
+    runtime: python
+    buildCommand: ""
+    startCommand: "python3 webhook_server.py"
+    healthCheckPath: "/status"
+    autoDeploy: true

@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+iron_bot.log
+.DS_Store
