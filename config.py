@@ -69,7 +69,14 @@ MILESTONE_3_TRIGGER = 35.0      # At +35 pts: Lock minimum +22 pts profit
 MAX_CANDLE_RANGE_POINTS = 45.0  # If signal candle > 45 index points, skip entry
 
 # =====================================================================
-# 3. TELEGRAM NOTIFICATIONS
+# 3. MACRO RADAR & OPTION CHAIN CONFLUENCE (LOOSELY COUPLED)
+# =====================================================================
+ENABLE_MACRO_RADAR = True        # Fetches pre-market global cues & VIX
+ENABLE_OI_SHIELD = True          # Tracks PCR, Call/Put Walls & Max Pain
+ENFORCE_OI_HARD_FILTER = False   # False = Advisory only (Safe). True = Rejects headwind trades.
+
+# =====================================================================
+# 4. TELEGRAM NOTIFICATIONS
 # =====================================================================
 # Set your Telegram Bot Token & Chat ID here (or via environment variables)
 TELEGRAM_BOT_TOKEN = "9174695247:AAF8_OgNYFimH7Kk-MT0OEzioRnKaCJqbOk"

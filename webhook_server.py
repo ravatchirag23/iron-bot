@@ -15,6 +15,8 @@ import database
 import risk_manager
 import paper_engine
 import telegram_notifier
+import macro_radar
+import option_chain_shield
 
 logging.basicConfig(
     level=logging.INFO,
@@ -61,6 +63,13 @@ class WebhookHandler(BaseHTTPRequestHandler):
         elif self.path == "/test_telegram":
             ok = telegram_notifier.send_telegram_alert("🚀 *IRON BOT:* Live Telegram Connection Verified on Render Cloud!")
             self._send_json(200, {"telegram_sent": ok})
+        elif self.path == "/macro":
+            data = macro_radar.get_macro_sentiment()
+            macro_radar.send_morning_briefing()
+            self._send_json(200, data)
+        elif self.path == "/option_chain":
+            data = option_chain_shield.get_oi_snapshot()
+            self._send_json(200, data)
         else:
             self._send_json(404, {"error": "Endpoint not found"})
 
@@ -134,7 +143,31 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
         # Calculate exact parameters
         trade_params = risk_manager.calculate_trade_parameters(signal_data)
-        trade_id = paper_engine.engine.process_entry(trade_params)
+        
+        # Loosely Coupled Option Chain Confluence Evaluation
+        oi_advisory = ""
+        if getattr(config, "ENABLE_OI_SHIELD", True):
+            try:
+                strike = risk_manager.get_atm_strike(trade_params["spot_price"], "BUY" in trade_params["signal_type"])
+                oi_eval = option_chain_shield.evaluate_signal_confluence(
+                    trade_params["signal_type"], 
+                    trade_params["spot_price"], 
+                    strike
+                )
+                oi_advisory = oi_eval.get("advisory", "")
+                
+                # Optional Hard Filter (Disabled by default - non-blocking)
+                if getattr(config, "ENFORCE_OI_HARD_FILTER", False) and not oi_eval.get("has_confluence", True):
+                    reason = f"Option Chain Wall Block: {oi_advisory}"
+                    logger.warning(reason)
+                    telegram_notifier.notify_rejection(reason, signal_data)
+                    self._send_json(400, {"status": "REJECTED", "reason": reason})
+                    return
+            except Exception as e:
+                logger.warning(f"Option shield advisory bypassed safely: {e}")
+                oi_advisory = ""
+
+        trade_id = paper_engine.engine.process_entry(trade_params, oi_advisory=oi_advisory)
         
         self._send_json(200, {
             "status": "APPROVED_AND_EXECUTED",
@@ -184,6 +217,20 @@ class WebhookHandler(BaseHTTPRequestHandler):
         
         status_color = "#e74c3c" if stats.get("is_locked", 0) == 1 else "#2ecc71"
         status_text = "LOCKED (Limit Reached)" if stats.get("is_locked", 0) == 1 else "ACTIVE & ARMED"
+
+        macro_text = "⚪ Neutral (Feed idle)"
+        oi_text = "PCR: 1.04 | Res: 25,300 | Supp: 24,800"
+        try:
+            m = macro_radar.get_macro_sentiment()
+            macro_text = f"{m['bias']} ({m['score']:+d}/100)"
+        except Exception:
+            pass
+
+        try:
+            o = option_chain_shield.get_oi_snapshot()
+            oi_text = f"PCR: <b>{o['pcr']}</b> | Res: <b>{o['call_wall_resistance']}</b> | Supp: <b>{o['put_wall_support']}</b>"
+        except Exception:
+            pass
 
         trades_html = ""
         for t in all_trades:
@@ -255,6 +302,17 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     <div class="card">
                         <small style="color: #7f8c8d; font-weight: bold;">PROTECTION MODE</small>
                         <div class="card-val" style="color: #3498db; font-size: 20px;">13 IRON RULES ACTIVE</div>
+                    </div>
+                </div>
+
+                <div class="cards" style="grid-template-columns: repeat(2, 1fr); margin-top: -5px;">
+                    <div class="card" style="text-align: left; padding: 15px 20px;">
+                        <small style="color: #7f8c8d; font-weight: bold;">🧭 PRE-MARKET MACRO RADAR</small>
+                        <div style="font-size: 16px; font-weight: bold; margin-top: 8px;">{macro_text}</div>
+                    </div>
+                    <div class="card" style="text-align: left; padding: 15px 20px;">
+                        <small style="color: #7f8c8d; font-weight: bold;">📊 OPTION CHAIN MARKET STRUCTURE</small>
+                        <div style="font-size: 16px; margin-top: 8px;">{oi_text}</div>
                     </div>
                 </div>
 

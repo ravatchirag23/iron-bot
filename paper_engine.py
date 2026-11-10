@@ -17,7 +17,7 @@ class PaperTradingEngine:
     def sync_state(self):
         self.active_trade = database.get_active_trade()
 
-    def process_entry(self, trade_params: Dict[str, Any]) -> int:
+    def process_entry(self, trade_params: Dict[str, Any], oi_advisory: str = "") -> int:
         """Executes a virtual trade entry and sends Telegram notification."""
         trade_id = database.record_trade_entry(trade_params)
         self.active_trade = database.get_active_trade()
@@ -29,7 +29,8 @@ class PaperTradingEngine:
             entry_price=trade_params["entry_price"],
             sl_price=trade_params["sl_price"],
             target_price=trade_params["target_price"],
-            quantity=trade_params["quantity"]
+            quantity=trade_params["quantity"],
+            oi_advisory=oi_advisory
         )
         return trade_id
 
