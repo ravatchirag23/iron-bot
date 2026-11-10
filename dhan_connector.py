@@ -11,13 +11,17 @@ import os
 import ssl
 import urllib.request
 import urllib.error
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 import config
+import database
+import telegram_notifier
 
 logger = logging.getLogger("IronBot.Dhan")
 
 # Dhan v2 API Endpoints
 DHAN_BASE_URL = "https://api.dhan.co/v2"
+DHAN_AUTH_URL = "https://auth.dhan.co/app"
 
 # SSL context for universal certificate handling
 _ssl_ctx = ssl.create_default_context()
@@ -25,10 +29,21 @@ _ssl_ctx.check_hostname = False
 _ssl_ctx.verify_mode = ssl.CERT_NONE
 
 
+def get_current_token() -> str:
+    """Retrieves access token from database, falling back to config or env."""
+    try:
+        db_token = database.get_config("DHAN_ACCESS_TOKEN")
+        if db_token and len(db_token.strip()) > 20:
+            return db_token.strip()
+    except Exception:
+        pass
+    return os.environ.get("DHAN_ACCESS_TOKEN", getattr(config, "DHAN_ACCESS_TOKEN", "")).strip()
+
+
 def _get_headers() -> Dict[str, str]:
-    """Builds authentication headers from configuration or environment variables."""
-    client_id = os.environ.get("DHAN_CLIENT_ID", getattr(config, "DHAN_CLIENT_ID", ""))
-    access_token = os.environ.get("DHAN_ACCESS_TOKEN", getattr(config, "DHAN_ACCESS_TOKEN", ""))
+    """Builds authentication headers from configuration or database."""
+    client_id = os.environ.get("DHAN_CLIENT_ID", getattr(config, "DHAN_CLIENT_ID", "")).strip()
+    access_token = get_current_token()
     return {
         "access-token": access_token,
         "client-id": client_id,
@@ -202,3 +217,102 @@ def route_order_to_broker(trade_params: Dict[str, Any]) -> Dict[str, Any]:
         "mode": "LIVE_FAILED",
         "error": res or "Order rejected by broker"
     }
+
+
+def update_access_token(new_token: str) -> Dict[str, Any]:
+    """
+    Dynamically saves a new access token to SQLite without redeploying.
+    Immediately validates the token against the Dhan Profile API.
+    """
+    clean_token = new_token.strip()
+    if not clean_token:
+        return {"success": False, "error": "Token string is empty"}
+
+    database.set_config("DHAN_ACCESS_TOKEN", clean_token)
+    
+    # Verify immediately
+    profile = get_profile()
+    if profile and "dhanClientId" in profile:
+        client_id = profile.get("dhanClientId")
+        validity = profile.get("tokenValidity", "Unknown")
+        
+        # Notify Telegram
+        telegram_notifier.send_telegram_alert(
+            "🔑 *DHANHQ TOKEN RENEWED DYNAMICALLY*\n\n"
+            f"👤 *Client ID:* `{client_id}`\n"
+            f"⏰ *New Validity:* `{validity}`\n"
+            "✅ *Status:* Broker handshake successful! System armed."
+        )
+        return {
+            "success": True,
+            "client_id": client_id,
+            "validity": validity,
+            "message": "Token verified & saved to database."
+        }
+    
+    return {
+        "success": False,
+        "error": "Token saved to database, but Dhan API returned error on verification."
+    }
+
+
+def run_8am_handshake(force: bool = False) -> Dict[str, Any]:
+    """
+    Daily 8:00 AM IST Pre-Market Automated Handshake.
+    Verifies if Dhan token is valid for today's market session (9:15 to 15:30).
+    Dispatches status briefing to Telegram.
+    """
+    logger.info("[DHAN 8AM] Running pre-market broker handshake check...")
+    status = get_connection_status()
+
+    if status.get("connected"):
+        validity = status.get("token_validity", "Unknown")
+        client_id = status.get("client_id", "")
+        balance = status.get("available_balance", 0.0)
+
+        # Check if validity covers today's market hours
+        # tokenValidity format: "DD/MM/YYYY HH:MM" e.g. "11/11/2026 15:15"
+        is_sufficient = True
+        try:
+            val_dt = datetime.strptime(validity, "%d/%m/%Y %H:%M")
+            now_dt = config.get_now_ist().replace(tzinfo=None)
+            # Must be valid for at least another 6 hours
+            if (val_dt - now_dt).total_seconds() < (6 * 3600):
+                is_sufficient = False
+        except Exception:
+            pass
+
+        if is_sufficient:
+            msg = (
+                "🌅 *8:00 AM PRE-MARKET HANDSHAKE: GREEN*\n\n"
+                f"👤 *Dhan Client ID:* `{client_id}`\n"
+                f"🔑 *Token Validity:* `{validity}`\n"
+                f"💰 *Ledger Balance:* `₹{balance:.2f}` (Strict ₹0 Risk)\n"
+                "🛡️ *Execution:* `Canary Virtual Mode (Locked)`\n"
+                "🎯 *Trading Hours:* 9:30 AM – 2:45 PM IST\n\n"
+                "✅ *Broker Handshake 200 OK — Iron Bot is fully armed for today!*"
+            )
+            telegram_notifier.send_telegram_alert(msg)
+            return {"status": "SUCCESS", "validity": validity, "sufficient": True}
+        else:
+            msg = (
+                "⚠️ *8:00 AM HANDSHAKE WARNING: TOKEN EXPIRING SOON*\n\n"
+                f"👤 *Client ID:* `{client_id}`\n"
+                f"🔑 *Current Validity:* `{validity}`\n"
+                "⚠️ Token will expire during market hours today!\n\n"
+                "👉 *1-Tap Quick Renew:* Click below to paste new token:\n"
+                "https://iron-bot-yfo6.onrender.com/update_token"
+            )
+            telegram_notifier.send_telegram_alert(msg)
+            return {"status": "EXPIRING_SOON", "validity": validity, "sufficient": False}
+
+    # If completely disconnected / expired
+    msg = (
+        "🚨 *8:00 AM PRE-MARKET HANDSHAKE: RED (ACTION REQUIRED)*\n\n"
+        "❌ DhanHQ Access Token is EXPIRED or Invalid!\n\n"
+        "👉 *1-Tap Quick Renew:* Click below to paste new 24h token:\n"
+        "https://iron-bot-yfo6.onrender.com/update_token"
+    )
+    telegram_notifier.send_telegram_alert(msg)
+    return {"status": "DISCONNECTED", "sufficient": False}
+

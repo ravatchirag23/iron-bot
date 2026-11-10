@@ -64,6 +64,15 @@ def init_db():
     );
     """)
 
+    # 4. System config table (dynamic tokens & broker settings)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS system_config (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    """)
+
     # Safe Schema Migration for Trend Runner (is_runner column)
     try:
         cursor.execute("ALTER TABLE trades ADD COLUMN is_runner INTEGER DEFAULT 0")
@@ -213,6 +222,29 @@ def get_all_trades(limit: int = 20) -> List[Dict[str, Any]]:
     rows = cursor.fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+def get_config(key: str, default: Optional[str] = None) -> Optional[str]:
+    """Retrieves dynamic config value from system_config."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM system_config WHERE key = ?", (key,))
+    row = cursor.fetchone()
+    conn.close()
+    return row["value"] if row else default
+
+def set_config(key: str, value: str):
+    """Saves or updates dynamic config value in system_config."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    now_str = config.get_now_str_ist()
+    cursor.execute("""
+        INSERT INTO system_config (key, value, updated_at) 
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    """, (key, value, now_str))
+    conn.commit()
+    conn.close()
+    log_event("CONFIG_UPDATED", f"Key '{key}' updated dynamically")
 
 # Initialize tables when module is imported
 init_db()

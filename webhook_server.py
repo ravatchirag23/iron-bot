@@ -75,6 +75,11 @@ class WebhookHandler(BaseHTTPRequestHandler):
         elif self.path == "/dhan":
             data = dhan_connector.get_connection_status()
             self._send_json(200, data)
+        elif self.path == "/handshake":
+            data = dhan_connector.run_8am_handshake(force=True)
+            self._send_json(200, data)
+        elif self.path.startswith("/update_token"):
+            self.handle_update_token_page()
         else:
             self._send_json(404, {"error": "Endpoint not found"})
 
@@ -96,6 +101,8 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self.handle_tick(payload)
         elif self.path == "/reset":
             self.handle_reset()
+        elif self.path == "/update_token":
+            self.handle_update_token_post(post_data)
         else:
             self._send_json(404, {"error": "Endpoint not found"})
 
@@ -337,6 +344,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                         <div>Ledger Balance: <b>₹{dhan_balance:.2f}</b> (Safe ₹0 Risk)</div>
                         <div>Token Validity: <b>{dhan_validity}</b></div>
                         <div>Execution: <b style="color: #2980b9;">🛡️ Canary Virtual Locked</b></div>
+                        <div><a href="/update_token" style="color: #2980b9; text-decoration: underline; font-weight: bold;">🔑 1-Tap Renew Token</a></div>
                     </div>
                 </div>
 
@@ -368,16 +376,104 @@ class WebhookHandler(BaseHTTPRequestHandler):
         """
         self._send_html(200, html)
 
+    def handle_update_token_page(self, notice: str = ""):
+        status = dhan_connector.get_connection_status()
+        notice_html = f"<div style='background: #27ae60; color: white; padding: 12px; border-radius: 8px; margin-bottom: 20px; font-weight: bold;'>{notice}</div>" if notice else ""
+        
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>DhanHQ Token Renewal — Iron Bot</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; padding: 20px; margin: 0; }}
+                .container {{ max-width: 600px; margin: auto; background: #1e293b; padding: 25px; border-radius: 12px; border: 1px solid #334155; }}
+                h2 {{ margin-top: 0; color: #38bdf8; }}
+                .status-box {{ background: #0f172a; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; border-left: 4px solid #38bdf8; line-height: 1.8; }}
+                textarea {{ width: 100%; box-sizing: border-box; height: 110px; background: #0f172a; color: #f8fafc; border: 1px solid #475569; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 12px; }}
+                button {{ width: 100%; padding: 14px; background: #2563eb; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 15px; }}
+                button:hover {{ background: #1d4ed8; }}
+                .instructions {{ font-size: 13px; color: #94a3b8; margin-top: 20px; line-height: 1.6; }}
+                a {{ color: #38bdf8; text-decoration: none; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h2>⚡ DhanHQ 24h Token Renewal</h2>
+                {notice_html}
+                <div class="status-box">
+                    <div><b>Client ID:</b> {status.get('client_id')}</div>
+                    <div><b>Token Validity:</b> {status.get('token_validity')}</div>
+                    <div><b>Status:</b> {'🟢 CONNECTED' if status.get('connected') else '🔴 EXPIRED'}</div>
+                    <div><b>Canary Execution:</b> 🛡️ 100% Virtual Mode Locked</div>
+                </div>
+
+                <form action="/update_token" method="POST">
+                    <label style="font-size: 14px; font-weight: bold; display: block; margin-bottom: 8px;">Paste New Access Token:</label>
+                    <textarea name="token" placeholder="eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9..." required></textarea>
+                    <button type="submit">Update Token & Verify Handshake</button>
+                </form>
+
+                <div class="instructions">
+                    <b>Quick Steps (15 Seconds):</b><br>
+                    1. Open <a href="https://web.dhan.co" target="_blank">web.dhan.co</a> on your phone/laptop.<br>
+                    2. Go to <b>My Profile</b> ➔ <b>Access DhanHQ APIs</b>.<br>
+                    3. Click <b>Generate new Access Token</b> and copy it.<br>
+                    4. Paste above and click <b>Update Token</b>.<br>
+                    <i>Instant live update in memory & DB — zero Render restart needed!</i>
+                </div>
+                <div style="margin-top: 15px; text-align: center;">
+                    <a href="/status">← Back to Dashboard</a>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        self._send_html(200, html)
+
+    def handle_update_token_post(self, post_data: bytes):
+        import urllib.parse
+        raw_str = post_data.decode("utf-8", errors="ignore")
+        
+        new_token = ""
+        try:
+            parsed_json = json.loads(raw_str)
+            new_token = parsed_json.get("token", "")
+        except Exception:
+            parsed_form = urllib.parse.parse_qs(raw_str)
+            tokens = parsed_form.get("token", [])
+            if tokens:
+                new_token = tokens[0]
+
+        res = dhan_connector.update_access_token(new_token)
+        if res.get("success"):
+            notice = f"✅ Token Successfully Updated! Valid until: {res.get('validity')}"
+            self.handle_update_token_page(notice=notice)
+        else:
+            self._send_json(400, res)
+
 def start_position_monitor_thread():
     """
-    Background daemon that monitors open active positions every 3 seconds (Gap #1 Protection).
-    - Polls live NSE option chain for exact tick LTP.
-    - Feeds tick into paper_engine to check Target, SL, Trailing, 45-min stagnation, and 15:15 IST exit.
+    Background daemon:
+    1. Monitors active trade every 3s (Gap #1 Protection).
+    2. Runs Daily 8:00 AM IST Automated Pre-Market Handshake.
     """
     def monitor_loop():
-        logger.info("⚡ Live Position Monitor Daemon activated (Gap #1 Protection).")
+        import time as time_lib
+        logger.info("⚡ Background Daemon activated (Position Monitor + 8:00 AM Handshake).")
+        last_8am_date = None
         while True:
             try:
+                # A. Daily 8:00 AM IST Automated Handshake
+                now_ist = config.get_now_ist()
+                today_str = now_ist.strftime("%Y-%m-%d")
+                if now_ist.hour == 8 and last_8am_date != today_str:
+                    logger.info("[DAEMON] Triggering 8:00 AM IST Pre-Market Handshake...")
+                    dhan_connector.run_8am_handshake()
+                    last_8am_date = today_str
+
+                # B. Position Monitor
                 active = database.get_active_trade()
                 if active:
                     symbol = active["symbol"]
@@ -393,9 +489,9 @@ def start_position_monitor_thread():
                             logger.info(f"Position #{active['id']} closed automatically: {res.get('reason')} at ₹{live_ltp}")
                 
             except Exception as e:
-                logger.warning(f"Position Monitor Daemon loop exception (recovered safely): {e}")
+                logger.warning(f"Background Daemon loop exception (recovered safely): {e}")
                 
-            time.sleep(getattr(config, "MONITOR_POLL_INTERVAL_SECONDS", 3))
+            time_lib.sleep(getattr(config, "MONITOR_POLL_INTERVAL_SECONDS", 3))
 
     t = threading.Thread(target=monitor_loop, daemon=True)
     t.start()
