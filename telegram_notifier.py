@@ -14,10 +14,11 @@ logger = logging.getLogger("IronBot.Telegram")
 
 def send_telegram_alert(message: str) -> bool:
     """Send formatted markdown alert to Telegram. Falls back gracefully if no token configured."""
-    print(f"\n📢 [IRON BOT ALERT]\n{message}\n" + "-"*45)
+    print(f"\n📢 [IRON BOT ALERT]\n{message}\n" + "-"*45, flush=True)
     
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return True # Handled in console
+        print(f"[TELEGRAM ERROR] Missing credentials. Token: {'SET' if TELEGRAM_BOT_TOKEN else 'MISSING'}, ChatID: {'SET' if TELEGRAM_CHAT_ID else 'MISSING'}", flush=True)
+        return False
         
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -29,9 +30,17 @@ def send_telegram_alert(message: str) -> bool:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
         
-        with urllib.request.urlopen(req, timeout=5) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            result = response.read().decode("utf-8")
+            print(f"[TELEGRAM SUCCESS] Status: {response.status} | Result: {result}", flush=True)
             return response.status == 200
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="ignore")
+        print(f"[TELEGRAM HTTP ERROR] Code: {e.code} | Reason: {err_body}", flush=True)
+        logger.error(f"Telegram HTTP Error {e.code}: {err_body}")
+        return False
     except Exception as e:
+        print(f"[TELEGRAM GENERAL ERROR] {e}", flush=True)
         logger.error(f"Failed to send Telegram message: {e}")
         return False
 

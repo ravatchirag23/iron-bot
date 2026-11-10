@@ -58,6 +58,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
         elif self.path == "/trades":
             trades = database.get_all_trades(50)
             self._send_json(200, {"trades": trades})
+        elif self.path == "/test_telegram":
+            ok = telegram_notifier.send_telegram_alert("🚀 *IRON BOT:* Live Telegram Connection Verified on Render Cloud!")
+            self._send_json(200, {"telegram_sent": ok})
         else:
             self._send_json(404, {"error": "Endpoint not found"})
 
