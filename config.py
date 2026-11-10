@@ -97,3 +97,14 @@ ENFORCE_OI_HARD_FILTER = False   # False = Advisory only (Safe). True = Rejects 
 # Set your Telegram Bot Token & Chat ID here (or via environment variables)
 TELEGRAM_BOT_TOKEN = "9174695247:AAF8_OgNYFimH7Kk-MT0OEzioRnKaCJqbOk"
 TELEGRAM_CHAT_ID = "1651536670"
+
+# =====================================================================
+# 5. DHANHQ BROKER INTEGRATION (LOOSELY COUPLED)
+# =====================================================================
+DHAN_CLIENT_ID = os.environ.get("DHAN_CLIENT_ID", "1105133010")
+DHAN_ACCESS_TOKEN = os.environ.get(
+    "DHAN_ACCESS_TOKEN", 
+    "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJ1c2VyUmVnaW9uIjoiUjEiLCJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiIiwiZXhwIjoxNzk0MzkwMzUwLCJpYXQiOjE3OTQzMDM5NTAsInRva2VuQ29uc3VtZXJUeXBlIjoiU0VMRiIsIndlYmhvb2tVcmwiOiIiLCJkaGFuQ2xpZW50SWQiOiIxMTA1MTMzMDEwIn0.3-C5AO8mcjrJi5IAFRxnN9730GFgoge9FDMjtHSzbSgj0xrugRl8psr_clBtuGZyDJN2gqiP1nLR4xUmGa25tA"
+)
+ENABLE_DHAN_BROKER = True
+

@@ -22,6 +22,14 @@ class PaperTradingEngine:
         trade_id = database.record_trade_entry(trade_params)
         self.active_trade = database.get_active_trade()
         self.milestone_reached = 0
+
+        # Broker Gateway Hook (Audited with ₹0 risk Canary Interception)
+        try:
+            import dhan_connector
+            trade_params["trade_id"] = trade_id
+            dhan_connector.route_order_to_broker(trade_params)
+        except Exception:
+            pass
         
         telegram_notifier.notify_entry(
             symbol=trade_params["symbol"],

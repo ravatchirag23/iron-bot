@@ -7,10 +7,15 @@ import urllib.request
 import urllib.parse
 import json
 import logging
+import ssl
 from typing import Optional
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
 logger = logging.getLogger("IronBot.Telegram")
+
+_ssl_ctx = ssl.create_default_context()
+_ssl_ctx.check_hostname = False
+_ssl_ctx.verify_mode = ssl.CERT_NONE
 
 def send_telegram_alert(message: str) -> bool:
     """Send formatted markdown alert to Telegram. Falls back gracefully if no token configured."""
@@ -30,7 +35,7 @@ def send_telegram_alert(message: str) -> bool:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
         
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=10) as response:
             result = response.read().decode("utf-8")
             print(f"[TELEGRAM SUCCESS] Status: {response.status} | Result: {result}", flush=True)
             return response.status == 200

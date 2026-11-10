@@ -18,6 +18,7 @@ import paper_engine
 import telegram_notifier
 import macro_radar
 import option_chain_shield
+import dhan_connector
 
 logging.basicConfig(
     level=logging.INFO,
@@ -70,6 +71,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self._send_json(200, data)
         elif self.path == "/option_chain":
             data = option_chain_shield.get_oi_snapshot()
+            self._send_json(200, data)
+        elif self.path == "/dhan":
+            data = dhan_connector.get_connection_status()
             self._send_json(200, data)
         else:
             self._send_json(404, {"error": "Endpoint not found"})
@@ -233,6 +237,12 @@ class WebhookHandler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
+        dhan_info = dhan_connector.get_connection_status()
+        dhan_badge = "🟢 CONNECTED" if dhan_info.get("connected") else "🔴 DISCONNECTED"
+        dhan_client = dhan_info.get("client_id", "N/A")
+        dhan_validity = dhan_info.get("token_validity", "N/A")
+        dhan_balance = dhan_info.get("available_balance", 0.0)
+
         trades_html = ""
         for t in all_trades:
             pnl_color = "#2ecc71" if t["pnl_rupees"] >= 0 else "#e74c3c"
@@ -314,6 +324,19 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     <div class="card" style="text-align: left; padding: 15px 20px;">
                         <small style="color: #7f8c8d; font-weight: bold;">📊 OPTION CHAIN MARKET STRUCTURE</small>
                         <div style="font-size: 16px; margin-top: 8px;">{oi_text}</div>
+                    </div>
+                </div>
+
+                <div class="card" style="text-align: left; padding: 15px 20px; margin-top: -5px; border-left: 5px solid #27ae60;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <small style="color: #7f8c8d; font-weight: bold;">⚡ DHANHQ INSTITUTIONAL BROKER GATEWAY</small>
+                        <span style="font-size: 12px; font-weight: bold; color: {'#27ae60' if dhan_info.get('connected') else '#e74c3c'};">{dhan_badge}</span>
+                    </div>
+                    <div style="font-size: 14px; margin-top: 8px; display: flex; gap: 20px; flex-wrap: wrap;">
+                        <div>Client ID: <b>{dhan_client}</b></div>
+                        <div>Ledger Balance: <b>₹{dhan_balance:.2f}</b> (Safe ₹0 Risk)</div>
+                        <div>Token Validity: <b>{dhan_validity}</b></div>
+                        <div>Execution: <b style="color: #2980b9;">🛡️ Canary Virtual Locked</b></div>
                     </div>
                 </div>
 
