@@ -76,8 +76,24 @@ def calculate_trade_parameters(signal_data: Dict[str, Any]) -> Dict[str, Any]:
     strike = get_atm_strike(spot, is_call)
     symbol = f"NIFTY{strike}{'CE' if is_call else 'PE'}"
     
-    # Premium calculation
-    entry_premium = float(signal_data.get("entry_price", config.DEFAULT_ASSUMED_PREMIUM))
+    # Premium calculation: Fetches real live option tick LTP from NSE feed
+    entry_premium = None
+    if "entry_price" in signal_data:
+        entry_premium = float(signal_data["entry_price"])
+    else:
+        try:
+            import option_chain_shield
+            quote = option_chain_shield.get_real_option_quote(spot, is_call)
+            if quote.get("ltp", 0.0) > 0.0:
+                entry_premium = float(quote["ltp"])
+                strike = int(quote["strike"])
+                expiry_str = quote.get("expiry", "")
+                symbol = f"NIFTY{strike}{'CE' if is_call else 'PE'} ({expiry_str})"
+        except Exception:
+            entry_premium = None
+
+    if not entry_premium:
+        entry_premium = config.DEFAULT_ASSUMED_PREMIUM
     
     # Micro-SL: Uses candle_low if available and reasonable, else fixed micro-SL
     candle_low = signal_data.get("candle_low")

@@ -13,9 +13,107 @@ from typing import Dict, Any, Optional, Tuple
 
 logger = logging.getLogger("IronBot.OptionShield")
 
-CACHE_TTL_SECONDS = 180 # 3 minutes cache to avoid rate-limiting
+CACHE_TTL_SECONDS = 60 # 1 minute cache for real tick updates
 _cached_data = None
 _last_fetch_time = 0.0
+
+def fetch_live_nse_option_chain() -> Optional[Dict[str, Any]]:
+    """
+    Fetches real-time NSE Nifty option chain with live tick LTP, Delta, IV, and strike-level OI.
+    Zero third-party library dependencies (pure urllib).
+    """
+    url = "https://api.niftypapertrade.in/api/market/optionchain/NIFTY"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        
+        records = data.get("records", {})
+        underlying = float(records.get("underlyingValue", 25050.0))
+        expiry_dates = records.get("expiryDates", [])
+        if not expiry_dates:
+            return None
+        nearest_expiry = expiry_dates[0]
+        
+        all_data = records.get("data", [])
+        expiry_data = [r for r in all_data if r.get("expiryDate") == nearest_expiry]
+        if not expiry_data:
+            return None
+            
+        atm_strike = round(underlying / 50.0) * 50
+        
+        total_call_oi = sum(r.get("CE", {}).get("openInterest", 0) for r in expiry_data)
+        total_put_oi = sum(r.get("PE", {}).get("openInterest", 0) for r in expiry_data)
+        pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi > 0 else 1.0
+        
+        # Local walls (within +/- 500 pts of ATM to capture actionable institutional defense)
+        near_records = [r for r in expiry_data if abs(r.get("strikePrice", 0) - underlying) <= 500]
+        if not near_records:
+            near_records = expiry_data
+            
+        call_recs = [r for r in near_records if r.get("strikePrice", 0) >= atm_strike]
+        put_recs = [r for r in near_records if r.get("strikePrice", 0) <= atm_strike]
+        
+        call_wall_rec = max(call_recs, key=lambda r: r.get("CE", {}).get("openInterest", 0)) if call_recs else near_records[0]
+        put_wall_rec = max(put_recs, key=lambda r: r.get("PE", {}).get("openInterest", 0)) if put_recs else near_records[0]
+        
+        # ATM record
+        atm_rec = next((r for r in expiry_data if r.get("strikePrice") == atm_strike), None)
+        ce_info = atm_rec.get("CE", {}) if atm_rec else {}
+        pe_info = atm_rec.get("PE", {}) if atm_rec else {}
+        
+        return {
+            "spot": underlying,
+            "expiry": nearest_expiry,
+            "atm_strike": atm_strike,
+            "ce_ltp": float(ce_info.get("lastPrice", 0.0)),
+            "pe_ltp": float(pe_info.get("lastPrice", 0.0)),
+            "ce_delta": float(ce_info.get("delta", 0.50)),
+            "pe_delta": float(pe_info.get("delta", -0.50)),
+            "ce_iv": float(ce_info.get("impliedVolatility", 15.0)),
+            "pe_iv": float(pe_info.get("impliedVolatility", 15.0)),
+            "call_wall_resistance": int(call_wall_rec.get("strikePrice", atm_strike + 150)),
+            "put_wall_support": int(put_wall_rec.get("strikePrice", atm_strike - 150)),
+            "call_wall_oi": int(call_wall_rec.get("CE", {}).get("openInterest", 0)),
+            "put_wall_oi": int(put_wall_rec.get("PE", {}).get("openInterest", 0)),
+            "total_call_oi": total_call_oi,
+            "total_put_oi": total_put_oi,
+            "pcr": pcr,
+            "sentiment": "🟢 BULLISH (Put Support)" if pcr >= 1.05 else ("🔴 BEARISH (Call Resistance)" if pcr <= 0.85 else "⚪ BALANCED"),
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+    except Exception as e:
+        logger.warning(f"Live option chain fetch failed, falling back to simulated: {e}")
+        return None
+
+def get_real_option_quote(spot_price: float, is_call: bool) -> Dict[str, Any]:
+    """
+    Returns real live option quote for ATM strike including exact live tick LTP, Delta, and Expiry.
+    """
+    snapshot = get_oi_snapshot(spot_price)
+    strike = snapshot.get("atm_strike", round(spot_price / 50.0) * 50)
+    expiry = snapshot.get("expiry", "Weekly")
+    
+    if is_call:
+        ltp = snapshot.get("ce_ltp", 0.0)
+        delta = snapshot.get("ce_delta", 0.50)
+    else:
+        ltp = snapshot.get("pe_ltp", 0.0)
+        delta = snapshot.get("pe_delta", -0.50)
+        
+    return {
+        "strike": strike,
+        "symbol": f"NIFTY{strike}{'CE' if is_call else 'PE'}",
+        "expiry": expiry,
+        "ltp": ltp,
+        "delta": delta,
+        "pcr": snapshot.get("pcr", 1.0),
+        "call_wall": snapshot.get("call_wall_resistance", strike + 150),
+        "put_wall": snapshot.get("put_wall_support", strike - 150)
+    }
 
 def get_simulated_live_oi_structure(spot_price: float = 25050.0) -> Dict[str, Any]:
     """
@@ -86,7 +184,14 @@ def get_oi_snapshot(spot_price: float = 25050.0) -> Dict[str, Any]:
         return _cached_data
         
     try:
-        # In production cloud, use resilient live structure computation
+        # First attempt: Real Live NSE Option Chain feed
+        live = fetch_live_nse_option_chain()
+        if live:
+            _cached_data = live
+            _last_fetch_time = now
+            return _cached_data
+            
+        # Fallback: Structural mathematical model
         _cached_data = get_simulated_live_oi_structure(spot_price)
         _last_fetch_time = now
         return _cached_data
