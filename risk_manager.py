@@ -127,6 +127,33 @@ def calculate_trade_parameters(signal_data: Dict[str, Any]) -> Dict[str, Any]:
     # India VIX Adaptive Dynamic SL & Target (Gap #5)
     sl_points, target_points, vix_regime = get_vix_adaptive_brackets()
     
+    # Loosely Coupled Confluence Trend Runner Evaluation
+    is_runner = False
+    runner_reason = ""
+    if getattr(config, "ENABLE_CONFLUENCE_TREND_RUNNER", True):
+        try:
+            import macro_radar
+            import option_chain_shield
+            
+            macro = macro_radar.get_macro_sentiment()
+            macro_score = int(macro.get("score", 0))
+            
+            snapshot = option_chain_shield.get_oi_snapshot(spot)
+            pcr = float(snapshot.get("pcr", 1.0))
+            call_wall = int(snapshot.get("call_wall_resistance", strike + 150))
+            put_wall = int(snapshot.get("put_wall_support", strike - 150))
+            
+            thresh = getattr(config, "RUNNER_MACRO_THRESHOLD", 30)
+            if is_call and macro_score >= thresh and pcr >= 1.05 and spot > put_wall:
+                is_runner = True
+                runner_reason = f"🟢 BULLISH CONFLUENCE (Macro: +{macro_score}, PCR: {pcr:.2f}) -> Trend Runner Mode Activated!"
+            elif not is_call and macro_score <= -thresh and pcr <= 0.85 and spot < call_wall:
+                is_runner = True
+                runner_reason = f"🔴 BEARISH CONFLUENCE (Macro: {macro_score}, PCR: {pcr:.2f}) -> Trend Runner Mode Activated!"
+        except Exception:
+            is_runner = False
+            runner_reason = ""
+            
     # Micro-SL: Uses candle_low if available and reasonable, else adaptive micro-SL
     candle_low = signal_data.get("candle_low")
     if candle_low and (ask_fill - float(candle_low)) <= 10.0 and (ask_fill - float(candle_low)) >= 4.0:
@@ -146,5 +173,7 @@ def calculate_trade_parameters(signal_data: Dict[str, Any]) -> Dict[str, Any]:
         "target_price": target_price,
         "quantity": config.DEFAULT_LOT_SIZE,
         "vix_regime": vix_regime,
+        "is_runner": is_runner,
+        "runner_reason": runner_reason,
         "delta": delta
     }

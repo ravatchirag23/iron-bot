@@ -30,7 +30,8 @@ class PaperTradingEngine:
             sl_price=trade_params["sl_price"],
             target_price=trade_params["target_price"],
             quantity=trade_params["quantity"],
-            oi_advisory=oi_advisory
+            oi_advisory=oi_advisory,
+            is_runner=trade_params.get("is_runner", False)
         )
         return trade_id
 
@@ -85,7 +86,10 @@ class PaperTradingEngine:
             pass
 
         # 1. Target Hit (Selling at Bid - Spread Friction)
-        if current_price >= target:
+        is_runner = bool(trade.get("is_runner", 0))
+
+        if not is_runner and current_price >= target:
+            # Fixed Target Exit (Hit & Run for Normal/Chop days)
             bid_exit = round(target - config.BID_ASK_FRICTION_POINTS, 2)
             pnl_pts = round(bid_exit - entry, 2)
             pnl_rupees = round(pnl_pts * qty, 2)
@@ -100,34 +104,53 @@ class PaperTradingEngine:
             bid_exit = round(sl - config.BID_ASK_FRICTION_POINTS, 2)
             pnl_pts = round(bid_exit - entry, 2)
             pnl_rupees = round(pnl_pts * qty, 2)
-            reason = "TRAILING_SL_HIT" if sl >= entry else "MICRO_SL_HIT"
+            if sl > entry:
+                reason = "RUNNER_TRAILING_HIT" if is_runner else "TRAILING_SL_HIT"
+            else:
+                reason = "MICRO_SL_HIT"
             database.record_trade_exit(trade_id, bid_exit, reason, pnl_pts, pnl_rupees)
             database.lock_system_today(f"{reason} reached. Strict 1-trade shutdown!")
             telegram_notifier.notify_exit(symbol, bid_exit, reason, pnl_pts, pnl_rupees)
             self.active_trade = None
             return {"status": "CLOSED", "reason": reason, "pnl_rupees": pnl_rupees}
 
-        # 3. Tiered Milestone Trailing Protection (Rule 9)
+        # 3. Tiered Milestone Trailing Protection (Rule 9 & Trend Runner Mode)
         # Milestone 1: At +12 pts -> Move SL to Cost
         if gain >= config.MILESTONE_1_TRIGGER and self.milestone_reached < 1:
             new_sl = entry
             self._update_sl(trade_id, new_sl)
             self.milestone_reached = 1
-            telegram_notifier.notify_trailing_update(symbol, "+12 pts (Cost Lock)", new_sl, 0.0)
+            tag = "+12 pts (Cost Lock - Runner Active)" if is_runner else "+12 pts (Cost Lock)"
+            telegram_notifier.notify_trailing_update(symbol, tag, new_sl, 0.0)
 
-        # Milestone 2: At +22 pts -> Lock +10 pts
+        # Milestone 2: At +22 pts -> Lock +12 pts
         elif gain >= config.MILESTONE_2_TRIGGER and self.milestone_reached < 2:
-            new_sl = entry + 10.0
+            new_sl = entry + 12.0
             self._update_sl(trade_id, new_sl)
             self.milestone_reached = 2
-            telegram_notifier.notify_trailing_update(symbol, "+22 pts (Lock +10 pts)", new_sl, 10.0 * qty)
+            tag = "🏃 RUNNER: Target Breached (+22 pts)! Locked +12 pts guaranteed!" if is_runner else "+22 pts (Lock +12 pts)"
+            telegram_notifier.notify_trailing_update(symbol, tag, new_sl, 12.0 * qty)
 
         # Milestone 3: At +35 pts -> Lock +22 pts
         elif gain >= config.MILESTONE_3_TRIGGER and self.milestone_reached < 3:
             new_sl = entry + 22.0
             self._update_sl(trade_id, new_sl)
             self.milestone_reached = 3
-            telegram_notifier.notify_trailing_update(symbol, "+35 pts (Lock +22 pts)", new_sl, 22.0 * qty)
+            tag = "🚀 RUNNER: +35 pts move! Locked +22 pts minimum!" if is_runner else "+35 pts (Lock +22 pts)"
+            telegram_notifier.notify_trailing_update(symbol, tag, new_sl, 22.0 * qty)
+
+        # Milestone 4+: Infinite Ratchet Trailing for Confluence Trend Runners
+        elif is_runner and gain > 35.0:
+            offset = getattr(config, "RUNNER_TRAIL_OFFSET_POINTS", 15.0)
+            dynamic_sl = round(current_price - offset, 2)
+            if dynamic_sl > (sl + 2.0): # Step up whenever price moves 2+ pts higher
+                self._update_sl(trade_id, dynamic_sl)
+                telegram_notifier.notify_trailing_update(
+                    symbol, 
+                    f"🌊 RUNNER SURFING: +{gain:.1f} pts! Trailing SL raised", 
+                    dynamic_sl, 
+                    (dynamic_sl - entry) * qty
+                )
 
         return {"status": "ACTIVE", "current_price": current_price, "sl": sl, "gain": gain}
 

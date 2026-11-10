@@ -79,6 +79,11 @@ BID_ASK_FRICTION_POINTS = 0.6   # Real spread between Ask buy & Bid exit
 # Rule 13: Active Background Position Monitor Daemon (Gap #1)
 MONITOR_POLL_INTERVAL_SECONDS = 3 # Background polling frequency
 
+# Rule 14: Confluence Trend Runner (Unlimited Upside on Monster Days)
+ENABLE_CONFLUENCE_TREND_RUNNER = True # Unlock Ratchet Trailing on Strong Confluence
+RUNNER_MACRO_THRESHOLD = 30           # Required Macro Radar score (+30 for CE, -30 for PE)
+RUNNER_TRAIL_OFFSET_POINTS = 15.0     # Points to trail behind peak price above +35 pts
+
 # =====================================================================
 # 3. MACRO RADAR & OPTION CHAIN CONFLUENCE (LOOSELY COUPLED)
 # =====================================================================

@@ -44,11 +44,13 @@ def send_telegram_alert(message: str) -> bool:
         logger.error(f"Failed to send Telegram message: {e}")
         return False
 
-def notify_entry(symbol: str, signal_type: str, entry_price: float, sl_price: float, target_price: float, quantity: int, oi_advisory: str = ""):
+def notify_entry(symbol: str, signal_type: str, entry_price: float, sl_price: float, target_price: float, quantity: int, oi_advisory: str = "", is_runner: bool = False):
     risk_pts = round(entry_price - sl_price if "BUY" in signal_type or "CE" in signal_type else sl_price - entry_price, 1)
     risk_rupees = round(risk_pts * quantity, 2)
     
-    advisory_line = f"🧭 *Market Structure:* {oi_advisory}\n" if oi_advisory else ""
+    safe_advisory = oi_advisory.replace("_", " ")
+    advisory_line = f"🧭 *Market Structure:* {safe_advisory}\n" if oi_advisory else ""
+    target_line = f"🚀 *Target:* 🌊 *UNLIMITED TREND RUNNER* (Ratchet Trailing)\n" if is_runner else f"🚀 *Target:* ₹{target_price:.2f} (+{target_price - entry_price:.1f} pts)\n"
 
     msg = (
         f"🤖 *IRON BOT: NEW TRADE TRIGGERED*\n"
@@ -57,7 +59,7 @@ def notify_entry(symbol: str, signal_type: str, entry_price: float, sl_price: fl
         f"🎯 *Strike:* `{symbol}` (1 Lot: {quantity} Qty)\n"
         f"💵 *Entry Price:* ₹{entry_price:.2f}\n"
         f"🛑 *Micro-SL:* ₹{sl_price:.2f} (Risk: {risk_pts} pts | ₹{risk_rupees})\n"
-        f"🚀 *Target:* ₹{target_price:.2f} (+{target_price - entry_price:.1f} pts)\n"
+        f"{target_line}"
         f"{advisory_line}"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"🔒 *Status:* 1-Trade Rule Active. No manual action needed!"

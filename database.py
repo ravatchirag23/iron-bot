@@ -63,6 +63,12 @@ def init_db():
         details TEXT NOT NULL
     );
     """)
+
+    # Safe Schema Migration for Trend Runner (is_runner column)
+    try:
+        cursor.execute("ALTER TABLE trades ADD COLUMN is_runner INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass # Column already exists
     
     conn.commit()
     conn.close()
@@ -123,15 +129,17 @@ def record_trade_entry(trade_data: Dict[str, Any]) -> int:
     today_str = config.get_today_ist()
     now_str = config.get_now_str_ist()
     
+    is_runner = 1 if trade_data.get("is_runner", False) else 0
+
     cursor.execute("""
         INSERT INTO trades (
             trade_date, timestamp, signal_type, symbol, spot_price,
-            entry_price, sl_price, target_price, quantity, status, is_paper
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 1)
+            entry_price, sl_price, target_price, quantity, status, is_paper, is_runner
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 1, ?)
     """, (
         today_str, now_str, trade_data["signal_type"], trade_data["symbol"],
         trade_data["spot_price"], trade_data["entry_price"], trade_data["sl_price"],
-        trade_data["target_price"], trade_data["quantity"]
+        trade_data["target_price"], trade_data["quantity"], is_runner
     ))
     
     trade_id = cursor.lastrowid
