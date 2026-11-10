@@ -8,6 +8,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 import json
 import logging
+import threading
 from datetime import datetime
 import os
 import config
@@ -344,7 +345,40 @@ class WebhookHandler(BaseHTTPRequestHandler):
         """
         self._send_html(200, html)
 
+def start_position_monitor_thread():
+    """
+    Background daemon that monitors open active positions every 3 seconds (Gap #1 Protection).
+    - Polls live NSE option chain for exact tick LTP.
+    - Feeds tick into paper_engine to check Target, SL, Trailing, 45-min stagnation, and 15:15 IST exit.
+    """
+    def monitor_loop():
+        logger.info("⚡ Live Position Monitor Daemon activated (Gap #1 Protection).")
+        while True:
+            try:
+                active = database.get_active_trade()
+                if active:
+                    symbol = active["symbol"]
+                    is_call = "CE" in symbol
+                    spot = float(active.get("spot_price", 25050.0))
+                    
+                    quote = option_chain_shield.get_real_option_quote(spot, is_call)
+                    live_ltp = float(quote.get("ltp", 0.0))
+                    
+                    if live_ltp > 0.0:
+                        res = paper_engine.engine.update_tick(live_ltp)
+                        if res and res.get("status") == "CLOSED":
+                            logger.info(f"Position #{active['id']} closed automatically: {res.get('reason')} at ₹{live_ltp}")
+                
+            except Exception as e:
+                logger.warning(f"Position Monitor Daemon loop exception (recovered safely): {e}")
+                
+            time.sleep(getattr(config, "MONITOR_POLL_INTERVAL_SECONDS", 3))
+
+    t = threading.Thread(target=monitor_loop, daemon=True)
+    t.start()
+
 def start_server():
+    start_position_monitor_thread()
     server = ThreadingHTTPServer((config.HOST, config.PORT), WebhookHandler)
     logger.info(f"Iron Bot Webhook Gateway running at http://localhost:{config.PORT}")
     logger.info(f"Dashboard available at http://localhost:{config.PORT}/status")

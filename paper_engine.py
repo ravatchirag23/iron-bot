@@ -55,25 +55,55 @@ class PaperTradingEngine:
         trade_id = trade["id"]
 
         gain = current_price - entry
+        now_ist = config.get_now_ist()
 
-        # 1. Target Hit
-        if current_price >= target:
-            pnl_pts = round(target - entry, 2)
+        # A. Mandatory 15:15 IST Square-Off (Gap #3: Expiry Zero Protection)
+        if now_ist.time() >= config.AUTO_SQUARE_OFF_TIME:
+            bid_exit = round(current_price - config.BID_ASK_FRICTION_POINTS, 2)
+            pnl_pts = round(bid_exit - entry, 2)
             pnl_rupees = round(pnl_pts * qty, 2)
-            database.record_trade_exit(trade_id, target, "TARGET_HIT", pnl_pts, pnl_rupees)
+            database.record_trade_exit(trade_id, bid_exit, "15:15_PM_AUTO_SQUARE_OFF", pnl_pts, pnl_rupees)
+            database.lock_system_today("15:15 PM Auto-Square-Off reached. Position closed safely!")
+            telegram_notifier.notify_exit(symbol, bid_exit, "15:15_PM_AUTO_SQUARE_OFF", pnl_pts, pnl_rupees)
+            self.active_trade = None
+            return {"status": "CLOSED", "reason": "15:15_PM_AUTO_SQUARE_OFF", "pnl_rupees": pnl_rupees}
+
+        # B. 45-Minute Stagnation Rule (Gap #2: Theta Decay Protection)
+        try:
+            entry_dt = datetime.strptime(trade["timestamp"], "%Y-%m-%d %H:%M:%S")
+            elapsed_mins = (now_ist.replace(tzinfo=None) - entry_dt).total_seconds() / 60.0
+            if elapsed_mins >= config.STAGNATION_TIMEOUT_MINUTES and gain < config.STAGNATION_MIN_GAIN_POINTS:
+                bid_exit = round(current_price - config.BID_ASK_FRICTION_POINTS, 2)
+                pnl_pts = round(bid_exit - entry, 2)
+                pnl_rupees = round(pnl_pts * qty, 2)
+                database.record_trade_exit(trade_id, bid_exit, "45MIN_THETA_STAGNATION_EXIT", pnl_pts, pnl_rupees)
+                database.lock_system_today("45-min stagnation exit. Theta decay killed!")
+                telegram_notifier.notify_exit(symbol, bid_exit, "45MIN_THETA_STAGNATION_EXIT", pnl_pts, pnl_rupees)
+                self.active_trade = None
+                return {"status": "CLOSED", "reason": "45MIN_THETA_STAGNATION_EXIT", "pnl_rupees": pnl_rupees}
+        except Exception:
+            pass
+
+        # 1. Target Hit (Selling at Bid - Spread Friction)
+        if current_price >= target:
+            bid_exit = round(target - config.BID_ASK_FRICTION_POINTS, 2)
+            pnl_pts = round(bid_exit - entry, 2)
+            pnl_rupees = round(pnl_pts * qty, 2)
+            database.record_trade_exit(trade_id, bid_exit, "TARGET_HIT", pnl_pts, pnl_rupees)
             database.lock_system_today("Target hit (+20 pts). Daily profit locked!")
-            telegram_notifier.notify_exit(symbol, target, "TARGET_HIT", pnl_pts, pnl_rupees)
+            telegram_notifier.notify_exit(symbol, bid_exit, "TARGET_HIT", pnl_pts, pnl_rupees)
             self.active_trade = None
             return {"status": "CLOSED", "reason": "TARGET_HIT", "pnl_rupees": pnl_rupees}
 
-        # 2. Stop-Loss Hit
+        # 2. Stop-Loss Hit (Selling at Bid - Spread Friction)
         if current_price <= sl:
-            pnl_pts = round(sl - entry, 2)
+            bid_exit = round(sl - config.BID_ASK_FRICTION_POINTS, 2)
+            pnl_pts = round(bid_exit - entry, 2)
             pnl_rupees = round(pnl_pts * qty, 2)
             reason = "TRAILING_SL_HIT" if sl >= entry else "MICRO_SL_HIT"
-            database.record_trade_exit(trade_id, sl, reason, pnl_pts, pnl_rupees)
+            database.record_trade_exit(trade_id, bid_exit, reason, pnl_pts, pnl_rupees)
             database.lock_system_today(f"{reason} reached. Strict 1-trade shutdown!")
-            telegram_notifier.notify_exit(symbol, sl, reason, pnl_pts, pnl_rupees)
+            telegram_notifier.notify_exit(symbol, bid_exit, reason, pnl_pts, pnl_rupees)
             self.active_trade = None
             return {"status": "CLOSED", "reason": reason, "pnl_rupees": pnl_rupees}
 

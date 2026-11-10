@@ -67,6 +67,27 @@ def validate_signal_armor(signal_data: Dict[str, Any]) -> Tuple[bool, str]:
 
     return True, "APPROVED"
 
+def get_vix_adaptive_brackets() -> Tuple[float, float, str]:
+    """
+    Returns (sl_pts, target_pts, regime_name) based on India VIX.
+    """
+    if not getattr(config, "ENABLE_VIX_ADAPTIVE", True):
+        return config.DEFAULT_MICRO_SL_POINTS, config.DEFAULT_TARGET_POINTS, "FIXED"
+        
+    try:
+        import macro_radar
+        macro = macro_radar.get_macro_sentiment()
+        vix = float(macro.get("vix", {}).get("price", 15.0))
+    except Exception:
+        vix = 15.0
+        
+    if vix < 13.0:
+        return 6.0, 16.0, f"LOW_VIX ({vix:.1f}) -> 16 pt TP / 6 pt SL"
+    elif vix > 18.0:
+        return 9.0, 28.0, f"HIGH_VIX ({vix:.1f}) -> 28 pt TP / 9 pt SL"
+    else:
+        return 7.0, 22.0, f"NORMAL_VIX ({vix:.1f}) -> 22 pt TP / 7 pt SL"
+
 def calculate_trade_parameters(signal_data: Dict[str, Any]) -> Dict[str, Any]:
     """Calculates ATM Strike, Micro-SL, Target, and Quantity."""
     spot = float(signal_data.get("spot", 25050.0))
@@ -76,8 +97,10 @@ def calculate_trade_parameters(signal_data: Dict[str, Any]) -> Dict[str, Any]:
     strike = get_atm_strike(spot, is_call)
     symbol = f"NIFTY{strike}{'CE' if is_call else 'PE'}"
     
-    # Premium calculation: Fetches real live option tick LTP from NSE feed
+    # Premium calculation: Fetches real live option tick LTP & Ask from NSE feed
     entry_premium = None
+    ask_fill = None
+    delta = 0.50
     if "entry_price" in signal_data:
         entry_premium = float(signal_data["entry_price"])
     else:
@@ -86,6 +109,9 @@ def calculate_trade_parameters(signal_data: Dict[str, Any]) -> Dict[str, Any]:
             quote = option_chain_shield.get_real_option_quote(spot, is_call)
             if quote.get("ltp", 0.0) > 0.0:
                 entry_premium = float(quote["ltp"])
+                # Real market fills at Ask price (Spread Friction)
+                ask_fill = float(quote.get("ask", entry_premium + config.BID_ASK_FRICTION_POINTS))
+                delta = float(quote.get("delta", 0.50))
                 strike = int(quote["strike"])
                 expiry_str = quote.get("expiry", "")
                 symbol = f"NIFTY{strike}{'CE' if is_call else 'PE'} ({expiry_str})"
@@ -94,22 +120,31 @@ def calculate_trade_parameters(signal_data: Dict[str, Any]) -> Dict[str, Any]:
 
     if not entry_premium:
         entry_premium = config.DEFAULT_ASSUMED_PREMIUM
+        ask_fill = entry_premium + config.BID_ASK_FRICTION_POINTS
+    elif ask_fill is None:
+        ask_fill = round(entry_premium + config.BID_ASK_FRICTION_POINTS, 2)
     
-    # Micro-SL: Uses candle_low if available and reasonable, else fixed micro-SL
+    # India VIX Adaptive Dynamic SL & Target (Gap #5)
+    sl_points, target_points, vix_regime = get_vix_adaptive_brackets()
+    
+    # Micro-SL: Uses candle_low if available and reasonable, else adaptive micro-SL
     candle_low = signal_data.get("candle_low")
-    if candle_low and (entry_premium - float(candle_low)) <= 10.0 and (entry_premium - float(candle_low)) >= 4.0:
+    if candle_low and (ask_fill - float(candle_low)) <= 10.0 and (ask_fill - float(candle_low)) >= 4.0:
         sl_price = round(float(candle_low), 2)
     else:
-        sl_price = round(entry_premium - config.DEFAULT_MICRO_SL_POINTS, 2)
+        sl_price = round(ask_fill - sl_points, 2)
         
-    target_price = round(entry_premium + config.DEFAULT_TARGET_POINTS, 2)
+    target_price = round(ask_fill + target_points, 2)
     
     return {
         "signal_type": "BUY_CE" if is_call else "SELL_PE",
         "symbol": symbol,
         "spot_price": spot,
-        "entry_price": entry_premium,
+        "entry_price": ask_fill, # Real fill price accounting for Ask spread
+        "ltp_reference": entry_premium,
         "sl_price": sl_price,
         "target_price": target_price,
-        "quantity": config.DEFAULT_LOT_SIZE
+        "quantity": config.DEFAULT_LOT_SIZE,
+        "vix_regime": vix_regime,
+        "delta": delta
     }

@@ -65,12 +65,19 @@ def fetch_live_nse_option_chain() -> Optional[Dict[str, Any]]:
         ce_info = atm_rec.get("CE", {}) if atm_rec else {}
         pe_info = atm_rec.get("PE", {}) if atm_rec else {}
         
+        ce_ltp = float(ce_info.get("lastPrice", 0.0))
+        pe_ltp = float(pe_info.get("lastPrice", 0.0))
+        
         return {
             "spot": underlying,
             "expiry": nearest_expiry,
             "atm_strike": atm_strike,
-            "ce_ltp": float(ce_info.get("lastPrice", 0.0)),
-            "pe_ltp": float(pe_info.get("lastPrice", 0.0)),
+            "ce_ltp": ce_ltp,
+            "pe_ltp": pe_ltp,
+            "ce_ask": float(ce_info.get("askPrice") or (ce_ltp + 0.6)),
+            "ce_bid": float(ce_info.get("bidprice") or max(1.0, ce_ltp - 0.6)),
+            "pe_ask": float(pe_info.get("askPrice") or (pe_ltp + 0.6)),
+            "pe_bid": float(pe_info.get("bidprice") or max(1.0, pe_ltp - 0.6)),
             "ce_delta": float(ce_info.get("delta", 0.50)),
             "pe_delta": float(pe_info.get("delta", -0.50)),
             "ce_iv": float(ce_info.get("impliedVolatility", 15.0)),
@@ -91,7 +98,7 @@ def fetch_live_nse_option_chain() -> Optional[Dict[str, Any]]:
 
 def get_real_option_quote(spot_price: float, is_call: bool) -> Dict[str, Any]:
     """
-    Returns real live option quote for ATM strike including exact live tick LTP, Delta, and Expiry.
+    Returns real live option quote for ATM strike including exact live tick LTP, Ask, Bid, Delta, and Expiry.
     """
     snapshot = get_oi_snapshot(spot_price)
     strike = snapshot.get("atm_strike", round(spot_price / 50.0) * 50)
@@ -99,9 +106,13 @@ def get_real_option_quote(spot_price: float, is_call: bool) -> Dict[str, Any]:
     
     if is_call:
         ltp = snapshot.get("ce_ltp", 0.0)
+        ask = snapshot.get("ce_ask", ltp + 0.6)
+        bid = snapshot.get("ce_bid", max(1.0, ltp - 0.6))
         delta = snapshot.get("ce_delta", 0.50)
     else:
         ltp = snapshot.get("pe_ltp", 0.0)
+        ask = snapshot.get("pe_ask", ltp + 0.6)
+        bid = snapshot.get("pe_bid", max(1.0, ltp - 0.6))
         delta = snapshot.get("pe_delta", -0.50)
         
     return {
@@ -109,6 +120,8 @@ def get_real_option_quote(spot_price: float, is_call: bool) -> Dict[str, Any]:
         "symbol": f"NIFTY{strike}{'CE' if is_call else 'PE'}",
         "expiry": expiry,
         "ltp": ltp,
+        "ask": ask,
+        "bid": bid,
         "delta": delta,
         "pcr": snapshot.get("pcr", 1.0),
         "call_wall": snapshot.get("call_wall_resistance", strike + 150),

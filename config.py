@@ -56,9 +56,10 @@ MIN_OPTION_PREMIUM = 45.0       # Ignore cheap decaying OTM options (< ₹45)
 MAX_OPTION_PREMIUM = 75.0       # Ignore expensive high-delta options (> ₹75)
 DEFAULT_ASSUMED_PREMIUM = 58.0  # Typical ATM entry price when not provided
 
-# Rule 8: Micro-Stop-Loss & Targets
+# Rule 8: Micro-Stop-Loss & Targets (Baseline Defaults)
 DEFAULT_MICRO_SL_POINTS = 7.0   # Max 7 points stop loss (~₹450 risk on 65 qty)
 DEFAULT_TARGET_POINTS = 22.0    # 22 points target (~₹1,430 profit on 65 qty)
+ENABLE_VIX_ADAPTIVE = True      # Scales SL/TP based on India VIX regime
 
 # Rule 9: Tiered Milestone Trailing Protection
 MILESTONE_1_TRIGGER = 12.0      # At +12 pts: Move SL to Entry (Cost / Breakeven)
@@ -67,6 +68,16 @@ MILESTONE_3_TRIGGER = 35.0      # At +35 pts: Lock minimum +22 pts profit
 
 # Rule 10: Exhaustion Candle Filter (Avoid Buying the Top of a Giant Candle)
 MAX_CANDLE_RANGE_POINTS = 45.0  # If signal candle > 45 index points, skip entry
+
+# Rule 11: Theta Decay & Time Stagnation Protection (Gap #2)
+STAGNATION_TIMEOUT_MINUTES = 45 # Exit if position stagnant after 45 minutes
+STAGNATION_MIN_GAIN_POINTS = 5.0 # Minimum gain required to avoid stagnation exit
+
+# Rule 12: Real Market Execution Friction & Bid-Ask Slippage (Gap #4)
+BID_ASK_FRICTION_POINTS = 0.6   # Real spread between Ask buy & Bid exit
+
+# Rule 13: Active Background Position Monitor Daemon (Gap #1)
+MONITOR_POLL_INTERVAL_SECONDS = 3 # Background polling frequency
 
 # =====================================================================
 # 3. MACRO RADAR & OPTION CHAIN CONFLUENCE (LOOSELY COUPLED)
