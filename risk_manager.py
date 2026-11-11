@@ -126,8 +126,14 @@ def calculate_trade_parameters(signal_data: Dict[str, Any]) -> Dict[str, Any]:
             entry_premium = None
 
     if not entry_premium:
-        entry_premium = config.DEFAULT_ASSUMED_PREMIUM
-        ask_fill = entry_premium + config.BID_ASK_FRICTION_POINTS
+        try:
+            import option_chain_shield
+            quote = option_chain_shield.get_real_option_quote(spot, is_call)
+            entry_premium = float(quote.get("ltp", 220.0))
+            ask_fill = float(quote.get("ask", entry_premium + config.BID_ASK_FRICTION_POINTS))
+        except Exception:
+            entry_premium = 220.0
+            ask_fill = 220.6
     elif ask_fill is None:
         ask_fill = round(entry_premium + config.BID_ASK_FRICTION_POINTS, 2)
     

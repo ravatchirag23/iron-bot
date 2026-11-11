@@ -32,9 +32,11 @@ HEADERS = {
 }
 
 class NativeMarketScanner:
-    def __init__(self, key_val: float = 2.0, atr_period: int = 1):
-        self.key_val = key_val
-        self.atr_period = atr_period
+    def __init__(self, sens: float = 1.5, atr_len: int = 2, ema_len: int = 20):
+        # Exact parameters matching ut-bot-clean.lipi in GoCharting
+        self.sens = sens
+        self.atr_len = atr_len
+        self.ema_len = ema_len
         self.last_candle_time = 0
         self.last_position = 0 # 1 = Long/CE, -1 = Short/PE
         self.is_running = False
@@ -81,13 +83,23 @@ class NativeMarketScanner:
 
     def evaluate_ut_bot(self, candles_3m: List[Dict[str, float]]) -> Tuple[int, float, Optional[Dict[str, Any]]]:
         """
-        Computes UT Bot Trailing Stop & Detects fresh signals on the latest closed candle.
+        Exact 1:1 port of 'ut-bot-clean.lipi' from GoCharting:
+        - 20 EMA Momentum Filter
+        - ATR(2) with 1.5 Sensitivity Multiplier
+        - Bullet-Proof Dual-Trigger (CrossUp + TrendBull OR EmaBreakUp + AboveTrail)
         Returns: (current_pos, latest_spot, new_signal_dict or None)
         """
-        if len(candles_3m) < 5:
+        if len(candles_3m) < self.ema_len + 2:
             return 0, 0.0, None
 
-        # 1. True Range Calculation
+        # 1. 20 EMA Calculation
+        closes = [c["close"] for c in candles_3m]
+        ema = [closes[0]]
+        alpha = 2.0 / (self.ema_len + 1.0)
+        for c in closes[1:]:
+            ema.append(alpha * c + (1.0 - alpha) * ema[-1])
+
+        # 2. True Range & ATR(2)
         tr_list = []
         for i in range(len(candles_3m)):
             c = candles_3m[i]
@@ -98,56 +110,89 @@ class NativeMarketScanner:
                 tr = max(c["high"] - c["low"], abs(c["high"] - prev_c), abs(c["low"] - prev_c))
             tr_list.append(tr)
 
-        # 2. UT Bot Trailing Stop State Machine
-        stop = 0.0
-        pos = 0
-        latest_c3 = candles_3m[-1]
-        candle_timestamp = latest_c3["time"]
+        atr = []
+        for i in range(len(tr_list)):
+            if i < self.atr_len - 1:
+                atr.append(sum(tr_list[:i+1]) / (i + 1))
+            else:
+                atr.append(sum(tr_list[i-self.atr_len+1:i+1]) / float(self.atr_len))
 
+        # 3. UT Bot Single Unified Trail (Exact Lipi Logic)
+        trail = []
         for i in range(len(candles_3m)):
             c = candles_3m[i]
-            src = c["close"]
-            tr = tr_list[i]
-            n_loss = self.key_val * tr
+            close = c["close"]
+            n_loss = self.sens * atr[i]
 
             if i == 0:
-                stop = src - n_loss
+                trail.append(close - n_loss)
                 continue
 
-            prev_stop = stop
-            if src > prev_stop:
-                stop = max(src - n_loss, prev_stop)
+            prev_trail = trail[-1]
+            prev_close = candles_3m[i-1]["close"]
+
+            if close > prev_trail and prev_close > prev_trail:
+                new_trail = max(prev_trail, close - n_loss)
+            elif close < prev_trail and prev_close < prev_trail:
+                new_trail = min(prev_trail, close + n_loss)
             else:
-                stop = min(src + n_loss, prev_stop)
+                new_trail = close - n_loss if close > prev_trail else close + n_loss
+            trail.append(new_trail)
 
-            prev_pos = pos
-            if src > stop:
-                pos = 1
-            elif src < stop:
-                pos = -1
+        # 4. Bullet-Proof Dual-Trigger State Machine
+        pos_state = 0
+        latest_c3 = candles_3m[-1]
+        candle_timestamp = latest_c3["time"]
+        new_signal = None
 
-            # Detect flip on the very latest completed candle
-            if i == len(candles_3m) - 1 and candle_timestamp != self.last_candle_time:
-                self.last_candle_time = candle_timestamp
-                
-                # Check for position flip
-                if pos != self.last_position and self.last_position != 0:
-                    sig_type = "BUY_CE" if pos == 1 else "BUY_PE"
-                    logger.info(f"⚡ [NATIVE UT BOT FLIP DETECTED] Signal={sig_type} Spot={src:.2f} CandleTime={candle_timestamp}")
-                    
-                    self.last_position = pos
-                    return pos, src, {
-                        "signal": sig_type,
-                        "spot": src,
-                        "candle_low": c["low"] if pos == 1 else c["high"],
-                        "candle_range": round(c["high"] - c["low"], 2),
+        for i in range(1, len(candles_3m)):
+            close = candles_3m[i]["close"]
+            prev_close = candles_3m[i-1]["close"]
+            t = trail[i]
+            prev_t = trail[i-1]
+            e = ema[i]
+            prev_e = ema[i-1]
+
+            trend_bull = close > e
+            trend_bear = close < e
+
+            cross_up = (close > t) and (prev_close <= prev_t)
+            cross_dn = (close < t) and (prev_close >= prev_t)
+            ema_break_up = (close > e) and (prev_close <= prev_e)
+            ema_break_dn = (close < e) and (prev_close >= prev_e)
+
+            buy_trigger = (cross_up and trend_bull) or (ema_break_up and (close > t))
+            sell_trigger = (cross_dn and trend_bear) or (ema_break_dn and (close < t))
+
+            buy_signal = buy_trigger and pos_state <= 0
+            sell_signal = sell_trigger and pos_state >= 0
+
+            if buy_signal:
+                pos_state = 1
+                if i == len(candles_3m) - 1 and candle_timestamp != self.last_candle_time:
+                    self.last_candle_time = candle_timestamp
+                    new_signal = {
+                        "signal": "BUY_CE",
+                        "spot": close,
+                        "candle_low": candles_3m[i]["low"],
+                        "candle_range": round(candles_3m[i]["high"] - candles_3m[i]["low"], 2),
                         "timestamp": candle_timestamp
                     }
-                
-                self.last_position = pos
+            elif sell_signal:
+                pos_state = -1
+                if i == len(candles_3m) - 1 and candle_timestamp != self.last_candle_time:
+                    self.last_candle_time = candle_timestamp
+                    new_signal = {
+                        "signal": "BUY_PE",
+                        "spot": close,
+                        "candle_low": candles_3m[i]["high"],
+                        "candle_range": round(candles_3m[i]["high"] - candles_3m[i]["low"], 2),
+                        "timestamp": candle_timestamp
+                    }
 
+        self.last_position = pos_state
         latest_spot = latest_c3["close"]
-        return pos, latest_spot, None
+        return pos_state, latest_spot, new_signal
 
     def scan_and_execute_cycle(self):
         """Single autonomous scan cycle."""

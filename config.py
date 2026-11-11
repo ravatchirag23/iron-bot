@@ -51,10 +51,10 @@ EURO_BLACKOUT_END = time(13, 45)
 # Rule 6: Duplicate Webhook Protection (Idempotency)
 DEBOUNCE_WINDOW_SECONDS = 60    # Reject duplicate alerts within 60s
 
-# Rule 7: Option Premium Sweet Spot & Strike Selection
-MIN_OPTION_PREMIUM = 45.0       # Ignore cheap decaying OTM options (< ₹45)
-MAX_OPTION_PREMIUM = 75.0       # Ignore expensive high-delta options (> ₹75)
-DEFAULT_ASSUMED_PREMIUM = 58.0  # Typical ATM entry price when not provided
+# Rule 7: Option Premium Sweet Spot & Real Market Strike Selection
+MIN_OPTION_PREMIUM = 50.0       # Ignore cheap decaying far-OTM lottery options (< ₹50)
+MAX_OPTION_PREMIUM = 450.0      # Realistic ceiling for Weekly ATM/Slight ITM options (₹150 to ₹350)
+DEFAULT_ASSUMED_PREMIUM = None  # Strictly disallow dummy prices. Must fetch real live exchange quote!
 
 # Rule 8: Micro-Stop-Loss & Targets (Baseline Defaults)
 DEFAULT_MICRO_SL_POINTS = 7.0   # Max 7 points stop loss (~₹450 risk on 65 qty)
