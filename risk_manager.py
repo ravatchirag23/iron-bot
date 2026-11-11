@@ -93,7 +93,14 @@ def calculate_trade_parameters(signal_data: Dict[str, Any]) -> Dict[str, Any]:
     spot = float(signal_data.get("spot", 25050.0))
     raw_signal = signal_data.get("signal", "BUY_CE").upper()
     
-    is_call = "CE" in raw_signal or "BUY" in raw_signal
+    # Accurate Options Direction: PE/PUT/SHORT takes precedence over BUY
+    if any(k in raw_signal for k in ["PE", "PUT", "SHORT"]):
+        is_call = False
+        signal_type = "BUY_PE"
+    else:
+        is_call = True
+        signal_type = "BUY_CE"
+
     strike = get_atm_strike(spot, is_call)
     symbol = f"NIFTY{strike}{'CE' if is_call else 'PE'}"
     

@@ -110,13 +110,21 @@ class WebhookHandler(BaseHTTPRequestHandler):
         logger.info(f"Incoming Webhook Alert: {payload}")
         
         # Parse GoCharting / TradingView payload
-        signal_type = payload.get("signal") or payload.get("message") or payload.get("action", "")
-        if not signal_type and "raw_text" in payload:
-            raw = str(payload["raw_text"])
-            if any(k in raw.upper() for k in ["BUY", "CE", "LONG"]):
+        raw_sig = str(payload.get("signal") or payload.get("message") or payload.get("action") or "").upper()
+        if any(k in raw_sig for k in ["PE", "PUT", "SHORT"]):
+            signal_type = "BUY_PE"
+        elif any(k in raw_sig for k in ["CE", "CALL", "LONG"]):
+            signal_type = "BUY_CE"
+        elif "BUY" in raw_sig:
+            signal_type = "BUY_CE"
+        elif not raw_sig and "raw_text" in payload:
+            raw = str(payload["raw_text"]).upper()
+            if any(k in raw for k in ["PE", "PUT", "SHORT"]):
+                signal_type = "BUY_PE"
+            elif any(k in raw for k in ["CE", "CALL", "BUY", "LONG"]):
                 signal_type = "BUY_CE"
-            elif any(k in raw.upper() for k in ["SELL", "PE", "SHORT"]):
-                signal_type = "SELL_PE"
+        else:
+            signal_type = raw_sig or "BUY_CE"
 
         # Spot price handling (fallback to current Nifty 25050)
         raw_spot = payload.get("spot") or payload.get("close") or payload.get("price")
