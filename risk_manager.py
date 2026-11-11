@@ -108,7 +108,7 @@ def calculate_trade_parameters(signal_data: Dict[str, Any]) -> Dict[str, Any]:
     entry_premium = None
     ask_fill = None
     delta = 0.50
-    if "entry_price" in signal_data:
+    if signal_data.get("entry_price") is not None:
         entry_premium = float(signal_data["entry_price"])
     else:
         try:

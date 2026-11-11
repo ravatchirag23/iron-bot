@@ -134,10 +134,13 @@ class WebhookHandler(BaseHTTPRequestHandler):
             spot_price = 25050.0
         
         # Format standardized signal data
+        raw_entry = payload.get("entry_price")
+        entry_price = float(raw_entry) if raw_entry is not None else None
+
         signal_data = {
             "signal": signal_type,
             "spot": spot_price,
-            "entry_price": float(payload.get("entry_price", config.DEFAULT_ASSUMED_PREMIUM)),
+            "entry_price": entry_price,
             "candle_low": payload.get("candle_low"),
             "candle_range": float(payload.get("candle_range", 15.0)),
             "is_test": payload.get("is_test", False)
@@ -154,7 +157,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
             is_opposite = (active_is_ce and incoming_is_pe) or (not active_is_ce and incoming_is_ce)
 
             if "EXIT" in raw_sig.upper() or ("CLOSE" in raw_sig.upper() and "CANDLE" not in raw_sig.upper()):
-                exit_price = float(payload.get("entry_price", config.DEFAULT_ASSUMED_PREMIUM))
+                exit_price = entry_price if entry_price is not None else float(active.get("entry_price", 220.0))
                 res = paper_engine.engine.force_exit(exit_price, "MANUAL_EXIT_COMMAND")
                 self._send_json(200, {"status": "EXIT_EXECUTED", "details": res})
                 return
