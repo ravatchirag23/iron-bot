@@ -8,10 +8,15 @@ Strictly loosely coupled: Zero crashes, graceful fallback to NEUTRAL on network 
 import urllib.request
 import json
 import logging
+import ssl
 from typing import Dict, Any, Tuple
 import telegram_notifier
 
 logger = logging.getLogger("IronBot.MacroRadar")
+
+_ssl_ctx = ssl.create_default_context()
+_ssl_ctx.check_hostname = False
+_ssl_ctx.verify_mode = ssl.CERT_NONE
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -25,7 +30,7 @@ def fetch_yahoo_quote(ticker: str) -> Tuple[float, float]:
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=2d"
         req = urllib.request.Request(url, headers=HEADERS)
-        with urllib.request.urlopen(req, timeout=4) as response:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=4) as response:
             data = json.loads(response.read().decode("utf-8"))
             meta = data["chart"]["result"][0]["meta"]
             price = float(meta.get("regularMarketPrice", 0.0))

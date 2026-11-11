@@ -9,9 +9,14 @@ import time
 import logging
 import urllib.request
 import json
+import ssl
 from typing import Dict, Any, Optional, Tuple
 
 logger = logging.getLogger("IronBot.OptionShield")
+
+_ssl_ctx = ssl.create_default_context()
+_ssl_ctx.check_hostname = False
+_ssl_ctx.verify_mode = ssl.CERT_NONE
 
 CACHE_TTL_SECONDS = 60 # 1 minute cache for real tick updates
 _cached_data = None
@@ -28,7 +33,7 @@ def fetch_live_nse_option_chain() -> Optional[Dict[str, Any]]:
         headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
     )
     try:
-        with urllib.request.urlopen(req, timeout=4) as resp:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=4) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         
         records = data.get("records", {})
