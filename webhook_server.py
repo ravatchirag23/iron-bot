@@ -506,6 +506,15 @@ def start_position_monitor_thread():
 
 def start_server():
     start_position_monitor_thread()
+    
+    # Start Autonomous Native Market Scanner (Zero-Dependency In-House Engine)
+    try:
+        import native_scanner
+        native_scanner.scanner.start_scanner_thread()
+        logger.info("⚡ Native UT Bot Autonomous Scanner started successfully!")
+    except Exception as e:
+        logger.warning(f"Native scanner startup exception: {e}")
+
     server = ThreadingHTTPServer((config.HOST, config.PORT), WebhookHandler)
     logger.info(f"Iron Bot Webhook Gateway running at http://localhost:{config.PORT}")
     logger.info(f"Dashboard available at http://localhost:{config.PORT}/status")
