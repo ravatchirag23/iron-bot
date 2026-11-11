@@ -145,13 +145,23 @@ class WebhookHandler(BaseHTTPRequestHandler):
         
         database.log_event(f"SIGNAL_RECEIVED_{signal_type}", json.dumps(payload))
 
-        # Check if incoming signal is an EXIT command
+        # Check if incoming signal is an EXIT command or Reversal
         active = database.get_active_trade()
-        if active and ("SELL" in signal_type.upper() or "EXIT" in signal_type.upper()):
-            exit_price = float(payload.get("entry_price", config.DEFAULT_ASSUMED_PREMIUM))
-            res = paper_engine.engine.force_exit(exit_price, "INDICATOR_OPPOSITE_SIGNAL")
-            self._send_json(200, {"status": "EXIT_EXECUTED", "details": res})
-            return
+        if active:
+            active_is_ce = "CE" in active["symbol"]
+            incoming_is_pe = "PE" in signal_type
+            incoming_is_ce = "CE" in signal_type
+            is_opposite = (active_is_ce and incoming_is_pe) or (not active_is_ce and incoming_is_ce)
+
+            if "EXIT" in raw_sig.upper() or ("CLOSE" in raw_sig.upper() and "CANDLE" not in raw_sig.upper()):
+                exit_price = float(payload.get("entry_price", config.DEFAULT_ASSUMED_PREMIUM))
+                res = paper_engine.engine.force_exit(exit_price, "MANUAL_EXIT_COMMAND")
+                self._send_json(200, {"status": "EXIT_EXECUTED", "details": res})
+                return
+            elif is_opposite:
+                # Square off old trade before entering opposite direction
+                logger.info(f"Opposite signal {signal_type} received while holding #{active['id']} {active['symbol']}. Closing old position for reversal!")
+                paper_engine.engine.force_exit(spot_price, "INDICATOR_OPPOSITE_SIGNAL")
 
         # 13 Iron Armor Rules Validation
         is_approved, reason = risk_manager.validate_signal_armor(signal_data)

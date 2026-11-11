@@ -32,11 +32,22 @@ HEADERS = {
 }
 
 class NativeMarketScanner:
-    def __init__(self, sens: float = 1.5, atr_len: int = 2, ema_len: int = 20):
-        # Exact parameters matching ut-bot-clean.lipi in GoCharting
-        self.sens = sens
-        self.atr_len = atr_len
+    def __init__(
+        self, 
+        a_buy: float = 1.5, 
+        c_buy: int = 10, 
+        a_sell: float = 1.5, 
+        c_sell: int = 10, 
+        ema_len: int = 20, 
+        use_ema_filter: bool = True
+    ):
+        # 100% Exact parameters matching ut-bot-options-ready.lipi in GoCharting
+        self.a_buy = a_buy
+        self.c_buy = c_buy
+        self.a_sell = a_sell
+        self.c_sell = c_sell
         self.ema_len = ema_len
+        self.use_ema_filter = use_ema_filter
         self.last_candle_time = 0
         self.last_position = 0 # 1 = Long/CE, -1 = Short/PE
         self.is_running = False
@@ -71,111 +82,149 @@ class NativeMarketScanner:
 
     def evaluate_ut_bot(self, candles_5m: List[Dict[str, float]]) -> Tuple[int, float, Optional[Dict[str, Any]]]:
         """
-        Exact 1:1 port of 'ut-bot-clean.lipi' on 5-Minute timeframe from GoCharting:
-        - 20 EMA Momentum Filter
-        - ATR(2) with 1.5 Sensitivity Multiplier
-        - Bullet-Proof Dual-Trigger (CrossUp + TrendBull OR EmaBreakUp + AboveTrail)
+        100% EXACT mathematical port of 'ut-bot-options-ready.lipi' from GoCharting:
+        - a_buy = 1.5, c_buy = 10 (ATR Period 10, Multiplier 1.5)
+        - a_sell = 1.5, c_sell = 10 (ATR Period 10, Multiplier 1.5)
+        - 20 EMA Momentum Trend Filter (talib.ema)
+        - Symmetrical Dual Independent Trails: trail_buy & trail_sell
+        - Direct crossover logic:
+            above_buy_cross = (close > trail_buy) and (close[1] <= trail_buy[1])
+            below_sell_cross = (close < trail_sell) and (close[1] >= trail_sell[1])
+        - Filtered confirmed alerts:
+            buy_signal_confirmed = buy_signal_raw and posState <= 0
+            sell_signal_confirmed = sell_signal_raw and posState >= 0
         Returns: (current_pos, latest_spot, new_signal_dict or None)
         """
-        if len(candles_5m) < self.ema_len + 2:
+        if len(candles_5m) < max(self.ema_len, self.c_buy, self.c_sell) + 2:
             return 0, 0.0, None
 
-        # 1. 20 EMA Calculation
-        closes = [c["close"] for c in candles_5m]
-        ema = [closes[0]]
-        alpha = 2.0 / (self.ema_len + 1.0)
-        for c in closes[1:]:
-            ema.append(alpha * c + (1.0 - alpha) * ema[-1])
+        n = len(candles_5m)
 
-        # 2. True Range & ATR(2)
-        tr_list = []
-        for i in range(len(candles_5m)):
+        # 1. 20 EMA Calculation (talib.ema)
+        alpha = 2.0 / (self.ema_len + 1.0)
+        ema = []
+        for i in range(n):
+            if i == 0:
+                ema.append(candles_5m[0]["close"])
+            else:
+                ema.append(alpha * candles_5m[i]["close"] + (1.0 - alpha) * ema[-1])
+
+        # 2. True Range & Welles Wilder ATR(10) (talib.atr)
+        tr = []
+        for i in range(n):
             c = candles_5m[i]
             if i == 0:
-                tr = c["high"] - c["low"]
+                tr.append(c["high"] - c["low"])
             else:
                 prev_c = candles_5m[i-1]["close"]
-                tr = max(c["high"] - c["low"], abs(c["high"] - prev_c), abs(c["low"] - prev_c))
-            tr_list.append(tr)
+                tr.append(max(c["high"] - c["low"], abs(c["high"] - prev_c), abs(c["low"] - prev_c)))
 
-        atr = []
-        for i in range(len(tr_list)):
-            if i < self.atr_len - 1:
-                atr.append(sum(tr_list[:i+1]) / (i + 1))
-            else:
-                atr.append(sum(tr_list[i-self.atr_len+1:i+1]) / float(self.atr_len))
-
-        # 3. UT Bot Single Unified Trail (Exact Lipi Logic)
-        trail = []
-        for i in range(len(candles_5m)):
-            c = candles_5m[i]
-            close = c["close"]
-            n_loss = self.sens * atr[i]
-
+        atr_buy = []
+        for i in range(n):
             if i == 0:
-                trail.append(close - n_loss)
-                continue
-
-            prev_trail = trail[-1]
-            prev_close = candles_5m[i-1]["close"]
-
-            if close > prev_trail and prev_close > prev_trail:
-                new_trail = max(prev_trail, close - n_loss)
-            elif close < prev_trail and prev_close < prev_trail:
-                new_trail = min(prev_trail, close + n_loss)
+                atr_buy.append(tr[0])
+            elif i < self.c_buy:
+                atr_buy.append((atr_buy[-1] * i + tr[i]) / (i + 1))
             else:
-                new_trail = close - n_loss if close > prev_trail else close + n_loss
-            trail.append(new_trail)
+                atr_buy.append((atr_buy[-1] * (self.c_buy - 1) + tr[i]) / float(self.c_buy))
 
-        # 4. Bullet-Proof Dual-Trigger State Machine
+        atr_sell = []
+        for i in range(n):
+            if i == 0:
+                atr_sell.append(tr[0])
+            elif i < self.c_sell:
+                atr_sell.append((atr_sell[-1] * i + tr[i]) / (i + 1))
+            else:
+                atr_sell.append((atr_sell[-1] * (self.c_sell - 1) + tr[i]) / float(self.c_sell))
+
+        # 3. UT Bot Dual Independent Trails (Exact GoCharting Lipi logic)
+        trail_buy = [None] * n
+        trail_sell = [None] * n
+
+        for i in range(n):
+            close = candles_5m[i]["close"]
+
+            # Buy Trail
+            n_loss_buy = self.a_buy * atr_buy[i]
+            if i == 0 or trail_buy[i-1] is None:
+                trail_buy[i] = close - n_loss_buy
+            else:
+                prev_tb = trail_buy[i-1]
+                prev_close = candles_5m[i-1]["close"]
+                if close > prev_tb and prev_close > prev_tb:
+                    trail_buy[i] = max(prev_tb, close - n_loss_buy)
+                elif close < prev_tb and prev_close < prev_tb:
+                    trail_buy[i] = min(prev_tb, close + n_loss_buy)
+                else:
+                    trail_buy[i] = close - n_loss_buy if close > prev_tb else close + n_loss_buy
+
+            # Sell Trail
+            n_loss_sell = self.a_sell * atr_sell[i]
+            if i == 0 or trail_sell[i-1] is None:
+                trail_sell[i] = close + n_loss_sell
+            else:
+                prev_ts = trail_sell[i-1]
+                prev_close = candles_5m[i-1]["close"]
+                if close > prev_ts and prev_close > prev_ts:
+                    trail_sell[i] = max(prev_ts, close - n_loss_sell)
+                elif close < prev_ts and prev_close < prev_ts:
+                    trail_sell[i] = min(prev_ts, close + n_loss_sell)
+                else:
+                    trail_sell[i] = close - n_loss_sell if close > prev_ts else close + n_loss_sell
+
+        # 4. Reliable Direct Crossover Logic + Trend Filter + State Machine
         pos_state = 0
         latest_c5 = candles_5m[-1]
         candle_timestamp = latest_c5["time"]
         new_signal = None
 
-        for i in range(1, len(candles_5m)):
+        for i in range(1, n):
             close = candles_5m[i]["close"]
             prev_close = candles_5m[i-1]["close"]
-            t = trail[i]
-            prev_t = trail[i-1]
+
+            tb = trail_buy[i]
+            prev_tb = trail_buy[i-1]
+            ts = trail_sell[i]
+            prev_ts = trail_sell[i-1]
             e = ema[i]
-            prev_e = ema[i-1]
 
-            trend_bull = close > e
-            trend_bear = close < e
+            trend_bull = not self.use_ema_filter or close > e
+            trend_bear = not self.use_ema_filter or close < e
 
-            cross_up = (close > t) and (prev_close <= prev_t)
-            cross_dn = (close < t) and (prev_close >= prev_t)
-            ema_break_up = (close > e) and (prev_close <= prev_e)
-            ema_break_dn = (close < e) and (prev_close >= prev_e)
+            above_buy_cross = (tb is not None and prev_tb is not None and close > tb and prev_close <= prev_tb)
+            below_sell_cross = (ts is not None and prev_ts is not None and close < ts and prev_close >= prev_ts)
 
-            buy_trigger = (cross_up and trend_bull) or (ema_break_up and (close > t))
-            sell_trigger = (cross_dn and trend_bear) or (ema_break_dn and (close < t))
+            buy_signal_raw = above_buy_cross and trend_bull
+            sell_signal_raw = below_sell_cross and trend_bear
 
-            buy_signal = buy_trigger and pos_state <= 0
-            sell_signal = sell_trigger and pos_state >= 0
+            buy_signal_confirmed = buy_signal_raw and pos_state <= 0
+            sell_signal_confirmed = sell_signal_raw and pos_state >= 0
 
-            if buy_signal:
+            # Emit signal if raw trigger fired (matching GoCharting chart arrows 1:1)
+            # The execution engine checks if already in trade to prevent duplicate entries
+            if buy_signal_raw:
                 pos_state = 1
-                if i == len(candles_5m) - 1 and candle_timestamp != self.last_candle_time:
+                if i == n - 1 and candle_timestamp != self.last_candle_time:
                     self.last_candle_time = candle_timestamp
                     new_signal = {
                         "signal": "BUY_CE",
                         "spot": close,
                         "candle_low": candles_5m[i]["low"],
                         "candle_range": round(candles_5m[i]["high"] - candles_5m[i]["low"], 2),
-                        "timestamp": candle_timestamp
+                        "timestamp": candle_timestamp,
+                        "is_reversal": buy_signal_confirmed
                     }
-            elif sell_signal:
+            elif sell_signal_raw:
                 pos_state = -1
-                if i == len(candles_5m) - 1 and candle_timestamp != self.last_candle_time:
+                if i == n - 1 and candle_timestamp != self.last_candle_time:
                     self.last_candle_time = candle_timestamp
                     new_signal = {
                         "signal": "BUY_PE",
                         "spot": close,
                         "candle_low": candles_5m[i]["high"],
                         "candle_range": round(candles_5m[i]["high"] - candles_5m[i]["low"], 2),
-                        "timestamp": candle_timestamp
+                        "timestamp": candle_timestamp,
+                        "is_reversal": sell_signal_confirmed
                     }
 
         self.last_position = pos_state
@@ -196,14 +245,17 @@ class NativeMarketScanner:
         sig_type = signal_data["signal"]
         logger.info(f"🎯 [AUTONOMOUS ENGINE TRIGGER] Processing native {sig_type} alert...")
 
-        # 1. Check if it's an EXIT command for an existing trade
+        # 1. Check if it's an EXIT command for an existing opposite trade
         active = database.get_active_trade()
         if active:
             active_is_ce = "CE" in active["symbol"]
             signal_is_pe = "PE" in sig_type
             if (active_is_ce and signal_is_pe) or (not active_is_ce and not signal_is_pe):
-                logger.info(f"Opposite signal {sig_type} detected for active position #{active['id']}. Forcing exit!")
+                logger.info(f"Opposite signal {sig_type} detected for active position #{active['id']}. Forcing reversal exit!")
                 paper_engine.engine.force_exit(spot, "UT_BOT_REVERSAL_EXIT")
+                # Position is now closed in DB, proceed to enter opposite direction!
+            else:
+                logger.info(f"Already in active trade #{active['id']} on {active['symbol']}. Ignoring duplicate {sig_type}.")
                 return
 
         # 2. 14 Iron Armor Rules Validation
