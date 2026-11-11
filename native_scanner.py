@@ -43,10 +43,10 @@ class NativeMarketScanner:
 
     def fetch_intraday_candles(self) -> List[Dict[str, float]]:
         """
-        Fetches 1m candles for NIFTY 50 (^NSEI) and aggregates into exact 3-minute bars.
+        Fetches official 5m candles for NIFTY 50 (^NSEI) matching GoCharting 5m chart 1:1.
         Zero external library dependencies.
         """
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI?interval=1m&range=1d"
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI?interval=5m&range=1d"
         req = urllib.request.Request(url, headers=HEADERS)
         try:
             with urllib.request.urlopen(req, context=_ssl_ctx, timeout=6) as resp:
@@ -56,44 +56,32 @@ class NativeMarketScanner:
             times = res["timestamp"]
             q = res["indicators"]["quote"][0]
 
-            candles_3m = []
-            bucket = []
-
+            candles = []
             for i in range(len(times)):
                 t = times[i]
                 o, h, l, c = q["open"][i], q["high"][i], q["low"][i], q["close"][i]
                 if None in (o, h, l, c):
                     continue
-                bucket.append({"time": t, "open": o, "high": h, "low": l, "close": c})
-                if len(bucket) == 3:
-                    c3 = {
-                        "time": bucket[-1]["time"],
-                        "open": bucket[0]["open"],
-                        "high": max(b["high"] for b in bucket),
-                        "low": min(b["low"] for b in bucket),
-                        "close": bucket[-1]["close"]
-                    }
-                    candles_3m.append(c3)
-                    bucket = []
+                candles.append({"time": t, "open": o, "high": h, "low": l, "close": c})
 
-            return candles_3m
+            return candles
         except Exception as e:
-            logger.warning(f"[SCANNER] Failed to fetch live candles: {e}")
+            logger.warning(f"[SCANNER] Failed to fetch live 5m candles: {e}")
             return []
 
-    def evaluate_ut_bot(self, candles_3m: List[Dict[str, float]]) -> Tuple[int, float, Optional[Dict[str, Any]]]:
+    def evaluate_ut_bot(self, candles_5m: List[Dict[str, float]]) -> Tuple[int, float, Optional[Dict[str, Any]]]:
         """
-        Exact 1:1 port of 'ut-bot-clean.lipi' from GoCharting:
+        Exact 1:1 port of 'ut-bot-clean.lipi' on 5-Minute timeframe from GoCharting:
         - 20 EMA Momentum Filter
         - ATR(2) with 1.5 Sensitivity Multiplier
         - Bullet-Proof Dual-Trigger (CrossUp + TrendBull OR EmaBreakUp + AboveTrail)
         Returns: (current_pos, latest_spot, new_signal_dict or None)
         """
-        if len(candles_3m) < self.ema_len + 2:
+        if len(candles_5m) < self.ema_len + 2:
             return 0, 0.0, None
 
         # 1. 20 EMA Calculation
-        closes = [c["close"] for c in candles_3m]
+        closes = [c["close"] for c in candles_5m]
         ema = [closes[0]]
         alpha = 2.0 / (self.ema_len + 1.0)
         for c in closes[1:]:
@@ -101,12 +89,12 @@ class NativeMarketScanner:
 
         # 2. True Range & ATR(2)
         tr_list = []
-        for i in range(len(candles_3m)):
-            c = candles_3m[i]
+        for i in range(len(candles_5m)):
+            c = candles_5m[i]
             if i == 0:
                 tr = c["high"] - c["low"]
             else:
-                prev_c = candles_3m[i-1]["close"]
+                prev_c = candles_5m[i-1]["close"]
                 tr = max(c["high"] - c["low"], abs(c["high"] - prev_c), abs(c["low"] - prev_c))
             tr_list.append(tr)
 
@@ -119,8 +107,8 @@ class NativeMarketScanner:
 
         # 3. UT Bot Single Unified Trail (Exact Lipi Logic)
         trail = []
-        for i in range(len(candles_3m)):
-            c = candles_3m[i]
+        for i in range(len(candles_5m)):
+            c = candles_5m[i]
             close = c["close"]
             n_loss = self.sens * atr[i]
 
@@ -129,7 +117,7 @@ class NativeMarketScanner:
                 continue
 
             prev_trail = trail[-1]
-            prev_close = candles_3m[i-1]["close"]
+            prev_close = candles_5m[i-1]["close"]
 
             if close > prev_trail and prev_close > prev_trail:
                 new_trail = max(prev_trail, close - n_loss)
@@ -141,13 +129,13 @@ class NativeMarketScanner:
 
         # 4. Bullet-Proof Dual-Trigger State Machine
         pos_state = 0
-        latest_c3 = candles_3m[-1]
-        candle_timestamp = latest_c3["time"]
+        latest_c5 = candles_5m[-1]
+        candle_timestamp = latest_c5["time"]
         new_signal = None
 
-        for i in range(1, len(candles_3m)):
-            close = candles_3m[i]["close"]
-            prev_close = candles_3m[i-1]["close"]
+        for i in range(1, len(candles_5m)):
+            close = candles_5m[i]["close"]
+            prev_close = candles_5m[i-1]["close"]
             t = trail[i]
             prev_t = trail[i-1]
             e = ema[i]
@@ -169,29 +157,29 @@ class NativeMarketScanner:
 
             if buy_signal:
                 pos_state = 1
-                if i == len(candles_3m) - 1 and candle_timestamp != self.last_candle_time:
+                if i == len(candles_5m) - 1 and candle_timestamp != self.last_candle_time:
                     self.last_candle_time = candle_timestamp
                     new_signal = {
                         "signal": "BUY_CE",
                         "spot": close,
-                        "candle_low": candles_3m[i]["low"],
-                        "candle_range": round(candles_3m[i]["high"] - candles_3m[i]["low"], 2),
+                        "candle_low": candles_5m[i]["low"],
+                        "candle_range": round(candles_5m[i]["high"] - candles_5m[i]["low"], 2),
                         "timestamp": candle_timestamp
                     }
             elif sell_signal:
                 pos_state = -1
-                if i == len(candles_3m) - 1 and candle_timestamp != self.last_candle_time:
+                if i == len(candles_5m) - 1 and candle_timestamp != self.last_candle_time:
                     self.last_candle_time = candle_timestamp
                     new_signal = {
                         "signal": "BUY_PE",
                         "spot": close,
-                        "candle_low": candles_3m[i]["high"],
-                        "candle_range": round(candles_3m[i]["high"] - candles_3m[i]["low"], 2),
+                        "candle_low": candles_5m[i]["high"],
+                        "candle_range": round(candles_5m[i]["high"] - candles_5m[i]["low"], 2),
                         "timestamp": candle_timestamp
                     }
 
         self.last_position = pos_state
-        latest_spot = latest_c3["close"]
+        latest_spot = latest_c5["close"]
         return pos_state, latest_spot, new_signal
 
     def scan_and_execute_cycle(self):
