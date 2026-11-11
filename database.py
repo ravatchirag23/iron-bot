@@ -246,5 +246,16 @@ def set_config(key: str, value: str):
     conn.close()
     log_event("CONFIG_UPDATED", f"Key '{key}' updated dynamically")
 
+def reset_daily_limits(today_str: Optional[str] = None):
+    """Clears daily_tracker and closes any active trades for clean testing."""
+    if not today_str:
+        today_str = config.get_today_ist()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM daily_tracker WHERE trade_date = ?", (today_str,))
+    cursor.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
+    conn.commit()
+    conn.close()
+
 # Initialize tables when module is imported
 init_db()
