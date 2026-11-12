@@ -3,3 +3,4 @@ __pycache__/
 iron_bot.log
 .DS_Store
 deploy_aws_ec2.py
+venv/
