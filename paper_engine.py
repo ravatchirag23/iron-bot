@@ -23,10 +23,15 @@ class PaperTradingEngine:
         self.active_trade = database.get_active_trade()
         self.milestone_reached = 0
 
-        # Broker Gateway Hook (Audited with ₹0 risk Canary Interception)
+        # Broker Gateway Hooks (Audited with ₹0 risk Canary Interception)
+        trade_params["trade_id"] = trade_id
+        try:
+            import angel_connector
+            angel_connector.route_order_to_broker(trade_params)
+        except Exception:
+            pass
         try:
             import dhan_connector
-            trade_params["trade_id"] = trade_id
             dhan_connector.route_order_to_broker(trade_params)
         except Exception:
             pass

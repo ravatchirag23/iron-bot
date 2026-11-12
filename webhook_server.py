@@ -19,6 +19,7 @@ import telegram_notifier
 import macro_radar
 import option_chain_shield
 import dhan_connector
+import angel_connector
 
 logging.basicConfig(
     level=logging.INFO,
@@ -271,6 +272,11 @@ class WebhookHandler(BaseHTTPRequestHandler):
         dhan_validity = dhan_info.get("token_validity", "N/A")
         dhan_balance = dhan_info.get("available_balance", 0.0)
 
+        angel_info = angel_connector.get_broker_status()
+        angel_badge = "🟢 CONNECTED" if angel_info.get("connected") else "🔴 DISCONNECTED"
+        angel_client = angel_info.get("client_code", "N/A")
+        angel_name = angel_info.get("profile_name", "N/A")
+
         trades_html = ""
         for t in all_trades:
             pnl_color = "#2ecc71" if t["pnl_rupees"] >= 0 else "#e74c3c"
@@ -355,9 +361,22 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     </div>
                 </div>
 
-                <div class="card" style="text-align: left; padding: 15px 20px; margin-top: -5px; border-left: 5px solid #27ae60;">
+                <div class="card" style="text-align: left; padding: 15px 20px; margin-top: -5px; border-left: 5px solid #3498db;">
                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <small style="color: #7f8c8d; font-weight: bold;">⚡ DHANHQ INSTITUTIONAL BROKER GATEWAY</small>
+                        <small style="color: #7f8c8d; font-weight: bold;">⚡ ANGEL ONE SMARTAPI GATEWAY</small>
+                        <span style="font-size: 12px; font-weight: bold; color: {'#27ae60' if angel_info.get('connected') else '#e74c3c'};">{angel_badge}</span>
+                    </div>
+                    <div style="font-size: 14px; margin-top: 8px; display: flex; gap: 20px; flex-wrap: wrap;">
+                        <div>Client Code: <b>{angel_client}</b></div>
+                        <div>Account Name: <b>{angel_name}</b></div>
+                        <div>Auth Mode: <b>TOTP Auto-Handshake</b></div>
+                        <div>Execution: <b style="color: #2980b9;">🛡️ Canary Virtual Locked</b></div>
+                    </div>
+                </div>
+
+                <div class="card" style="text-align: left; padding: 15px 20px; margin-top: 15px; border-left: 5px solid #27ae60;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <small style="color: #7f8c8d; font-weight: bold;">⚡ DHANHQ BROKER GATEWAY</small>
                         <span style="font-size: 12px; font-weight: bold; color: {'#27ae60' if dhan_info.get('connected') else '#e74c3c'};">{dhan_badge}</span>
                     </div>
                     <div style="font-size: 14px; margin-top: 8px; display: flex; gap: 20px; flex-wrap: wrap;">
