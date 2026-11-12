@@ -43,6 +43,14 @@ class PaperTradingEngine:
         )
         return trade_id
 
+    def _check_and_lock_daily_limits(self, reason: str):
+        """Locks the day only if max trades or max loss reached."""
+        stats = database.get_today_stats()
+        if stats.get("trade_count", 0) >= config.MAX_DAILY_TRADES:
+            database.lock_system_today(f"Max daily trades limit ({config.MAX_DAILY_TRADES}) reached")
+        elif stats.get("total_pnl_rupees", 0.0) <= -config.MAX_DAILY_LOSS_RUPEES:
+            database.lock_system_today(f"Daily loss limit (-₹{config.MAX_DAILY_LOSS_RUPEES}) hit")
+
     def update_tick(self, current_price: float) -> Optional[Dict[str, Any]]:
         """
         Processes price updates for the active trade.
@@ -86,7 +94,7 @@ class PaperTradingEngine:
                 pnl_pts = round(bid_exit - entry, 2)
                 pnl_rupees = round(pnl_pts * qty, 2)
                 database.record_trade_exit(trade_id, bid_exit, "45MIN_THETA_STAGNATION_EXIT", pnl_pts, pnl_rupees)
-                database.lock_system_today("45-min stagnation exit. Theta decay killed!")
+                self._check_and_lock_daily_limits("45MIN_THETA_STAGNATION_EXIT")
                 telegram_notifier.notify_exit(symbol, bid_exit, "45MIN_THETA_STAGNATION_EXIT", pnl_pts, pnl_rupees)
                 self.active_trade = None
                 return {"status": "CLOSED", "reason": "45MIN_THETA_STAGNATION_EXIT", "pnl_rupees": pnl_rupees}
@@ -102,7 +110,7 @@ class PaperTradingEngine:
             pnl_pts = round(bid_exit - entry, 2)
             pnl_rupees = round(pnl_pts * qty, 2)
             database.record_trade_exit(trade_id, bid_exit, "TARGET_HIT", pnl_pts, pnl_rupees)
-            database.lock_system_today("Target hit (+20 pts). Daily profit locked!")
+            self._check_and_lock_daily_limits("TARGET_HIT")
             telegram_notifier.notify_exit(symbol, bid_exit, "TARGET_HIT", pnl_pts, pnl_rupees)
             self.active_trade = None
             return {"status": "CLOSED", "reason": "TARGET_HIT", "pnl_rupees": pnl_rupees}
@@ -117,35 +125,42 @@ class PaperTradingEngine:
             else:
                 reason = "MICRO_SL_HIT"
             database.record_trade_exit(trade_id, bid_exit, reason, pnl_pts, pnl_rupees)
-            database.lock_system_today(f"{reason} reached. Strict 1-trade shutdown!")
+            self._check_and_lock_daily_limits(reason)
             telegram_notifier.notify_exit(symbol, bid_exit, reason, pnl_pts, pnl_rupees)
             self.active_trade = None
             return {"status": "CLOSED", "reason": reason, "pnl_rupees": pnl_rupees}
 
-        # 3. Tiered Milestone Trailing Protection (Rule 9 & Trend Runner Mode)
-        # Milestone 1: At +12 pts -> Move SL to Cost
-        if gain >= config.MILESTONE_1_TRIGGER and self.milestone_reached < 1:
+        # 3. Tiered Milestone Trailing Protection (Rule 9 & Dynamic Greeks Model)
+        initial_sl_dist = max(5.0, abs(entry - float(sl)))
+        m1_trigger = round(initial_sl_dist * 1.0, 1)  # 1:1 RR Cost Lock (e.g. +14 pts on ATM, +7.6 pts on OTM)
+        m2_trigger = round(initial_sl_dist * 1.5, 1)  # 1:1.5 RR Profit Lock
+        m3_trigger = round(initial_sl_dist * 2.2, 1)  # 1:2.2 RR Big Breakout Lock
+
+        # Milestone 1: At 1:1 RR gain -> Move SL to Cost
+        if gain >= m1_trigger and self.milestone_reached < 1:
             new_sl = entry
             self._update_sl(trade_id, new_sl)
             self.milestone_reached = 1
-            tag = "+12 pts (Cost Lock - Runner Active)" if is_runner else "+12 pts (Cost Lock)"
+            tag = f"+{gain:.1f} pts (Cost Lock - Runner Active)" if is_runner else f"+{gain:.1f} pts (Cost Lock @ ₹{entry:.2f})"
             telegram_notifier.notify_trailing_update(symbol, tag, new_sl, 0.0)
 
-        # Milestone 2: At +22 pts -> Lock +12 pts
-        elif gain >= config.MILESTONE_2_TRIGGER and self.milestone_reached < 2:
-            new_sl = entry + 12.0
+        # Milestone 2: At 1.5x RR gain -> Lock profit
+        elif gain >= m2_trigger and self.milestone_reached < 2:
+            locked_pts = round(initial_sl_dist * 0.75, 1)
+            new_sl = round(entry + locked_pts, 2)
             self._update_sl(trade_id, new_sl)
             self.milestone_reached = 2
-            tag = "🏃 RUNNER: Target Breached (+22 pts)! Locked +12 pts guaranteed!" if is_runner else "+22 pts (Lock +12 pts)"
-            telegram_notifier.notify_trailing_update(symbol, tag, new_sl, 12.0 * qty)
+            tag = f"🏃 RUNNER: Target Approaching! Locked +{locked_pts} pts profit!" if is_runner else f"+{gain:.1f} pts (Lock +{locked_pts} pts @ ₹{new_sl:.2f})"
+            telegram_notifier.notify_trailing_update(symbol, tag, new_sl, locked_pts * qty)
 
-        # Milestone 3: At +35 pts -> Lock +22 pts
-        elif gain >= config.MILESTONE_3_TRIGGER and self.milestone_reached < 3:
-            new_sl = entry + 22.0
+        # Milestone 3: At 2.2x RR gain -> Lock major profit
+        elif gain >= m3_trigger and self.milestone_reached < 3:
+            locked_pts = round(initial_sl_dist * 1.5, 1)
+            new_sl = round(entry + locked_pts, 2)
             self._update_sl(trade_id, new_sl)
             self.milestone_reached = 3
-            tag = "🚀 RUNNER: +35 pts move! Locked +22 pts minimum!" if is_runner else "+35 pts (Lock +22 pts)"
-            telegram_notifier.notify_trailing_update(symbol, tag, new_sl, 22.0 * qty)
+            tag = f"🚀 RUNNER: Giant Move! Locked +{locked_pts} pts profit!" if is_runner else f"+{gain:.1f} pts (Lock +{locked_pts} pts @ ₹{new_sl:.2f})"
+            telegram_notifier.notify_trailing_update(symbol, tag, new_sl, locked_pts * qty)
 
         # Milestone 4+: Infinite Ratchet Trailing for Confluence Trend Runners
         elif is_runner and gain > 35.0:
@@ -182,7 +197,7 @@ class PaperTradingEngine:
         pnl_rupees = round(pnl_pts * qty, 2)
         
         database.record_trade_exit(trade["id"], exit_price, reason, pnl_pts, pnl_rupees)
-        database.lock_system_today(f"Trade closed ({reason})")
+        self._check_and_lock_daily_limits(reason)
         telegram_notifier.notify_exit(trade["symbol"], exit_price, reason, pnl_pts, pnl_rupees)
         self.active_trade = None
         return {"status": "CLOSED", "reason": reason, "pnl_rupees": pnl_rupees}

@@ -67,6 +67,52 @@ def validate_signal_armor(signal_data: Dict[str, Any]) -> Tuple[bool, str]:
 
     return True, "APPROVED"
 
+def calculate_dynamic_greek_brackets(entry_premium: float, delta: float = 0.50, spot_atr: float = 22.0) -> Tuple[float, float, str]:
+    """
+    Buchanan + Passarelli Dynamic Greeks Stop-Loss & Target Engine:
+    1. Spot Breathing Room: ΔS_stop = SPOT_NOISE_MULTIPLIER * ATR * sqrt(VIX / 15.0)
+    2. Delta Translation: SL_pts = |Delta| * ΔS_stop + half_spread
+    3. Target Engine: TARGET_RR_RATIO (1:1.8) Risk-to-Reward Ratio (with Gamma acceleration)
+    """
+    if not getattr(config, "ENABLE_GREEKS_DYNAMIC_SL", True):
+        return get_vix_adaptive_brackets()
+        
+    try:
+        import macro_radar
+        macro = macro_radar.get_macro_sentiment()
+        vix = float(macro.get("vix", {}).get("price", 15.0))
+    except Exception:
+        vix = 15.0
+
+    # 1. Spot Invalidation Distance (1.3x ATR scaled by VIX volatility)
+    multiplier = getattr(config, "SPOT_NOISE_MULTIPLIER", 1.3)
+    vix_scale = max(0.8, min(1.5, (vix / 15.0) ** 0.5))
+    spot_noise_distance = max(18.0, spot_atr * multiplier * vix_scale)
+    
+    # 2. Option SL Distance via Buchanan Taylor Expansion (Slide 50)
+    abs_delta = max(0.20, min(0.95, abs(delta)))
+    
+    # Theoretical option drop = |Delta| * ΔS_stop + Half-Spread Buffer (0.75 pts)
+    sl_points_raw = (abs_delta * spot_noise_distance) + (config.BID_ASK_FRICTION_POINTS / 2.0)
+    
+    # Guardrails: Min floor (6.0 pts) and Max Cap (15% of premium)
+    min_sl = getattr(config, "MIN_SL_POINTS", 6.0)
+    max_sl_pct = getattr(config, "MAX_SL_PREMIUM_PCT", 0.15)
+    max_allowed_sl = max(min_sl + 2.0, entry_premium * max_sl_pct)
+    
+    sl_points = max(min_sl, min(sl_points_raw, max_allowed_sl))
+    sl_points = round(sl_points, 1)
+    
+    # 3. Institutional Risk-Reward Target (Passarelli 1:1.8 RRR)
+    rr_ratio = getattr(config, "TARGET_RR_RATIO", 1.8)
+    target_points = round(sl_points * rr_ratio, 1)
+    
+    regime = (
+        f"GREEK_DYNAMIC (Δ={abs_delta:.2f}, SpotRoom={spot_noise_distance:.1f}pts, VIX={vix:.1f}) "
+        f"-> SL: -{sl_points}pts | TP: +{target_points}pts (1:{rr_ratio:.1f} RR)"
+    )
+    return sl_points, target_points, regime
+
 def get_vix_adaptive_brackets() -> Tuple[float, float, str]:
     """
     Returns (sl_pts, target_pts, regime_name) based on India VIX.
@@ -137,8 +183,13 @@ def calculate_trade_parameters(signal_data: Dict[str, Any]) -> Dict[str, Any]:
     elif ask_fill is None:
         ask_fill = round(entry_premium + config.BID_ASK_FRICTION_POINTS, 2)
     
-    # India VIX Adaptive Dynamic SL & Target (Gap #5)
-    sl_points, target_points, vix_regime = get_vix_adaptive_brackets()
+    # Dynamic Greek-Engineered SL & Target (Buchanan + Passarelli Model)
+    spot_atr = float(signal_data.get("atr", getattr(config, "DEFAULT_SPOT_ATR", 22.0)))
+    sl_points, target_points, vix_regime = calculate_dynamic_greek_brackets(
+        entry_premium=ask_fill,
+        delta=delta,
+        spot_atr=spot_atr
+    )
     
     # Loosely Coupled Confluence Trend Runner Evaluation
     is_runner = False
@@ -167,13 +218,8 @@ def calculate_trade_parameters(signal_data: Dict[str, Any]) -> Dict[str, Any]:
             is_runner = False
             runner_reason = ""
             
-    # Micro-SL: Uses candle_low if available and reasonable, else adaptive micro-SL
-    candle_low = signal_data.get("candle_low")
-    if candle_low and (ask_fill - float(candle_low)) <= 10.0 and (ask_fill - float(candle_low)) >= 4.0:
-        sl_price = round(float(candle_low), 2)
-    else:
-        sl_price = round(ask_fill - sl_points, 2)
-        
+    # Micro-SL and Target
+    sl_price = round(ask_fill - sl_points, 2)
     target_price = round(ask_fill + target_points, 2)
     
     return {

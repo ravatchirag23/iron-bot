@@ -57,6 +57,16 @@ def notify_entry(symbol: str, signal_type: str, entry_price: float, sl_price: fl
     advisory_line = f"🧭 *Market Structure:* {safe_advisory}\n" if oi_advisory else ""
     target_line = f"🚀 *Target:* 🌊 *UNLIMITED TREND RUNNER* (Ratchet Trailing)\n" if is_runner else f"🚀 *Target:* ₹{target_price:.2f} (+{target_price - entry_price:.1f} pts)\n"
 
+    try:
+        import database
+        import config
+        stats = database.get_today_stats()
+        trades_done = stats.get("trade_count", 1)
+        max_trades = getattr(config, "MAX_DAILY_TRADES", 4)
+        status_line = f"🔒 *Status:* Trade {trades_done}/{max_trades} Active. Discipline locks ON!"
+    except Exception:
+        status_line = "🔒 *Status:* Trade Active. Discipline locks ON!"
+
     msg = (
         f"🤖 *IRON BOT: NEW TRADE TRIGGERED*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -67,7 +77,7 @@ def notify_entry(symbol: str, signal_type: str, entry_price: float, sl_price: fl
         f"{target_line}"
         f"{advisory_line}"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🔒 *Status:* 1-Trade Rule Active. No manual action needed!"
+        f"{status_line}"
     )
     send_telegram_alert(msg)
 
@@ -86,6 +96,20 @@ def notify_trailing_update(symbol: str, milestone: str, new_sl: float, locked_pr
 
 def notify_exit(symbol: str, exit_price: float, reason: str, pnl_points: float, pnl_rupees: float):
     emoji = "🟢" if pnl_rupees >= 0 else "🔴"
+    try:
+        import database
+        import config
+        stats = database.get_today_stats()
+        trades_done = stats.get("trade_count", 0)
+        max_trades = getattr(config, "MAX_DAILY_TRADES", 4)
+        is_locked = stats.get("is_locked", 0)
+        if is_locked or trades_done >= max_trades:
+            state_line = f"🔒 *System State:* DAILY LIMIT REACHED ({trades_done}/{max_trades}). Hibernating till tomorrow!"
+        else:
+            state_line = f"🔄 *System State:* ACTIVE ({trades_done}/{max_trades} Trades Used). Awaiting next signal!"
+    except Exception:
+        state_line = "🔒 *System State:* Trade closed."
+
     msg = (
         f"{emoji} *IRON BOT: TRADE CLOSED*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -95,7 +119,7 @@ def notify_exit(symbol: str, exit_price: float, reason: str, pnl_points: float, 
         f"📊 *Net P&L Points:* `{pnl_points:+.1f} pts`\n"
         f"💰 *Net Cash:* `{pnl_rupees:+.2f} INR`\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🔒 *System State:* DAILY LIMIT REACHED. Hibernating till tomorrow!"
+        f"{state_line}"
     )
     send_telegram_alert(msg)
 

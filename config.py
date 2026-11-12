@@ -35,8 +35,8 @@ HOST = "0.0.0.0"
 # 2. THE 13 IRON ARMOR RULES (DISCIPLINE LOCKS)
 # =====================================================================
 # Rule 1 & 2: Daily Trade & Loss Limits
-MAX_DAILY_TRADES = 1            # Strictly 1 trade per day in Phase 1
-MAX_DAILY_LOSS_RUPEES = 600     # Maximum daily risk limit (Hard shutdown)
+MAX_DAILY_TRADES = 4            # Up to 4 trades per day (Stress-test & capability evaluation)
+MAX_DAILY_LOSS_RUPEES = 2500    # Maximum daily risk limit (Hard shutdown for up to 4 trades)
 DEFAULT_LOT_SIZE = 65           # 1 Lot Nifty (or 25/50 depending on contract)
 
 # Rule 3 & 4: Time Windows
@@ -56,10 +56,16 @@ MIN_OPTION_PREMIUM = 50.0       # Ignore cheap decaying far-OTM lottery options 
 MAX_OPTION_PREMIUM = 450.0      # Realistic ceiling for Weekly ATM/Slight ITM options (₹150 to ₹350)
 DEFAULT_ASSUMED_PREMIUM = None  # Strictly disallow dummy prices. Must fetch real live exchange quote!
 
-# Rule 8: Micro-Stop-Loss & Targets (Baseline Defaults)
-DEFAULT_MICRO_SL_POINTS = 7.0   # Max 7 points stop loss (~₹450 risk on 65 qty)
-DEFAULT_TARGET_POINTS = 22.0    # 22 points target (~₹1,430 profit on 65 qty)
-ENABLE_VIX_ADAPTIVE = True      # Scales SL/TP based on India VIX regime
+# Rule 8: Micro-Stop-Loss & Targets (Buchanan + Passarelli Dynamic Greeks Engine)
+ENABLE_GREEKS_DYNAMIC_SL = True     # Dynamic SL derived from Delta, ATR, and Volatility
+DEFAULT_SPOT_ATR = 22.0             # Default 5-minute candle ATR for Nifty 50
+SPOT_NOISE_MULTIPLIER = 1.3         # 1.3x ATR breathing room to eliminate noise shakeouts
+TARGET_RR_RATIO = 1.8               # 1:1.8 Risk-to-Reward Ratio (Institutional Target)
+MAX_SL_PREMIUM_PCT = 0.15           # Max 15% of premium risked on any trade
+MIN_SL_POINTS = 6.0                 # Minimum floor SL points
+DEFAULT_MICRO_SL_POINTS = 14.0      # Fallback baseline SL
+DEFAULT_TARGET_POINTS = 26.0        # Fallback baseline Target
+ENABLE_VIX_ADAPTIVE = True          # Scales SL/TP based on India VIX regime
 
 # Rule 9: Tiered Milestone Trailing Protection
 MILESTONE_1_TRIGGER = 12.0      # At +12 pts: Move SL to Entry (Cost / Breakeven)
