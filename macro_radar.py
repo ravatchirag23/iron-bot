@@ -22,6 +22,10 @@ import config
 
 logger = logging.getLogger("IronBot.MacroRadar")
 
+_cached_macro = None
+_last_macro_time = 0.0
+MACRO_CACHE_TTL = 30.0 # 30-second cache for high-frequency dashboard polling
+
 _ssl_ctx = ssl.create_default_context()
 _ssl_ctx.check_hostname = False
 _ssl_ctx.verify_mode = ssl.CERT_NONE
@@ -75,7 +79,7 @@ def fetch_gift_nifty() -> Tuple[float, float]:
         logger.warning(f"Could not fetch GIFT Nifty from NSE IX: {e}")
     return 0.0, 0.0
 
-def get_macro_sentiment() -> Dict[str, Any]:
+def get_macro_sentiment(force: bool = False) -> Dict[str, Any]:
     """
     Computes aggregated Institutional Macro Sentiment Score (-100 Extreme Bearish to +100 Extreme Bullish).
     Evaluates:
@@ -86,6 +90,12 @@ def get_macro_sentiment() -> Dict[str, Any]:
     - India VIX (^INDIAVIX)
     - NIFTY 50 Spot (^NSEI)
     """
+    global _cached_macro, _last_macro_time
+    import time
+    now = time.time()
+    if not force and _cached_macro and (now - _last_macro_time) < MACRO_CACHE_TTL:
+        return _cached_macro
+
     gift_price, gift_chg = fetch_gift_nifty()
     dow_price, dow_chg = fetch_yahoo_quote("%5EDJI")
     nas_price, nas_chg = fetch_yahoo_quote("%5EIXIC")
@@ -193,7 +203,7 @@ def get_macro_sentiment() -> Dict[str, Any]:
         bias = "⚪ NEUTRAL / BALANCED"
         advisory = "No strong macro edge. Follow pure UT Bot Dual-Trigger with strict 7 pt Micro-SL."
 
-    return {
+    _cached_macro = {
         "score": score,
         "bias": bias,
         "advisory": advisory,
@@ -206,6 +216,8 @@ def get_macro_sentiment() -> Dict[str, Any]:
         "nifty": {"price": nifty_price, "change": nifty_chg},
         "factors": factors
     }
+    _last_macro_time = now
+    return _cached_macro
 
 def send_morning_briefing() -> bool:
     """Sends formatted Pre-Market Cockpit briefing to Telegram."""

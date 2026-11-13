@@ -60,6 +60,10 @@ class WebhookHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/" or self.path == "/status":
             self.handle_status()
+        elif self.path == "/api/live_state":
+            import dashboard
+            state = dashboard.get_live_dashboard_state()
+            self._send_json(200, state)
         elif self.path == "/trades":
             trades = database.get_all_trades(50)
             self._send_json(200, {"trades": trades})
@@ -245,176 +249,13 @@ class WebhookHandler(BaseHTTPRequestHandler):
         self._send_json(200, {"status": "RESET_SUCCESSFUL", "message": "Daily limits & active trades cleared for testing"})
 
     def handle_status(self):
-        stats = database.get_today_stats()
-        active = database.get_active_trade()
-        all_trades = database.get_all_trades(10)
-        
-        status_color = "#e74c3c" if stats.get("is_locked", 0) == 1 else "#2ecc71"
-        status_text = "LOCKED (Limit Reached)" if stats.get("is_locked", 0) == 1 else "ACTIVE & ARMED"
-
-        macro_text = "⚪ Neutral (Feed idle)"
-        oi_text = "PCR: 1.04 | Res: 25,300 | Supp: 24,800"
         try:
-            m = macro_radar.get_macro_sentiment()
-            macro_text = f"{m['bias']} ({m['score']:+d}/100)"
-        except Exception:
-            pass
-
-        try:
-            o = option_chain_shield.get_oi_snapshot()
-            oi_text = f"PCR: <b>{o['pcr']}</b> | Res: <b>{o['call_wall_resistance']}</b> | Supp: <b>{o['put_wall_support']}</b>"
-        except Exception:
-            pass
-
-        dhan_info = dhan_connector.get_connection_status()
-        dhan_badge = "🟢 CONNECTED" if dhan_info.get("connected") else "🔴 DISCONNECTED"
-        dhan_client = dhan_info.get("client_id", "N/A")
-        dhan_validity = dhan_info.get("token_validity", "N/A")
-        dhan_balance = dhan_info.get("available_balance", 0.0)
-
-        angel_info = angel_connector.get_broker_status()
-        angel_badge = "🟢 CONNECTED" if angel_info.get("connected") else "🔴 DISCONNECTED"
-        angel_client = angel_info.get("client_code", "N/A")
-        angel_name = angel_info.get("profile_name", "N/A")
-
-        trades_html = ""
-        for t in all_trades:
-            pnl_color = "#2ecc71" if t["pnl_rupees"] >= 0 else "#e74c3c"
-            trades_html += f"""
-            <tr>
-                <td>#{t['id']}</td>
-                <td>{t['timestamp']}</td>
-                <td><b>{t['symbol']}</b></td>
-                <td>₹{t['entry_price']}</td>
-                <td>₹{t['sl_price']}</td>
-                <td>₹{t['target_price']}</td>
-                <td>₹{t['exit_price'] or '-'}</td>
-                <td><span style="color: {pnl_color}; font-weight: bold;">{t['pnl_points']:+.1f} pts (₹{t['pnl_rupees']:+.2f})</span></td>
-                <td>{t['exit_reason'] or 'ACTIVE'}</td>
-            </tr>
-            """
-
-        active_html = "<p style='color: #7f8c8d;'>No active position. Waiting for confirmed GoCharting signal...</p>"
-        if active:
-            active_html = f"""
-            <div style="background: #ecf0f1; padding: 15px; border-left: 5px solid #3498db; border-radius: 4px;">
-                <h3 style="margin-top: 0; color: #2c3e50;">Active Position: {active['symbol']} (1 Lot: {active['quantity']} Qty)</h3>
-                <p>Entry: <b>₹{active['entry_price']}</b> | Micro-SL: <b>₹{active['sl_price']}</b> | Target: <b>₹{active['target_price']}</b></p>
-                <p>Entered At: {active['timestamp']}</p>
-            </div>
-            """
-
-        html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Iron Bot Dashboard — Chirag Ravat</title>
-            <meta http-equiv="refresh" content="5">
-            <style>
-                body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8f9fa; margin: 0; padding: 25px; color: #2c3e50; }}
-                .container {{ max-width: 1000px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }}
-                .header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #ecf0f1; padding-bottom: 15px; }}
-                .badge {{ background: {status_color}; color: white; padding: 8px 16px; border-radius: 20px; font-weight: bold; font-size: 14px; }}
-                .cards {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 25px 0; }}
-                .card {{ background: #fdfefe; border: 1px solid #e1e8ed; padding: 20px; border-radius: 8px; text-align: center; }}
-                .card-val {{ font-size: 26px; font-weight: bold; margin: 10px 0 0 0; }}
-                table {{ width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px; }}
-                th, td {{ padding: 12px; border-bottom: 1px solid #ecf0f1; text-align: left; }}
-                th {{ background: #f4f6f7; color: #7f8c8d; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <div>
-                        <h2 style="margin: 0;">🤖 IRON BOT — Live Operations Center</h2>
-                        <small style="color: #7f8c8d;">Mission: 15-20 pts Passive Income | 100% Virtual Ledger (₹0 Real Money at Risk)</small>
-                    </div>
-                    <div class="badge">{status_text}</div>
-                </div>
-
-                <div class="cards">
-                    <div class="card">
-                        <small style="color: #7f8c8d; font-weight: bold;">TODAY'S TRADES</small>
-                        <div class="card-val">{stats.get('trade_count', 0)} / {config.MAX_DAILY_TRADES}</div>
-                    </div>
-                    <div class="card">
-                        <small style="color: #7f8c8d; font-weight: bold;">TODAY'S NET P&L</small>
-                        <div class="card-val" style="color: {'#2ecc71' if stats.get('total_pnl_rupees', 0) >= 0 else '#e74c3c'};">
-                            ₹{stats.get('total_pnl_rupees', 0.0):+.2f}
-                        </div>
-                    </div>
-                    <div class="card">
-                        <small style="color: #7f8c8d; font-weight: bold;">PROTECTION MODE</small>
-                        <div class="card-val" style="color: #3498db; font-size: 20px;">13 IRON RULES ACTIVE</div>
-                    </div>
-                </div>
-
-                <div class="cards" style="grid-template-columns: repeat(2, 1fr); margin-top: -5px;">
-                    <div class="card" style="text-align: left; padding: 15px 20px;">
-                        <small style="color: #7f8c8d; font-weight: bold;">🧭 PRE-MARKET MACRO RADAR</small>
-                        <div style="font-size: 16px; font-weight: bold; margin-top: 8px;">{macro_text}</div>
-                    </div>
-                    <div class="card" style="text-align: left; padding: 15px 20px;">
-                        <small style="color: #7f8c8d; font-weight: bold;">📊 OPTION CHAIN MARKET STRUCTURE</small>
-                        <div style="font-size: 16px; margin-top: 8px;">{oi_text}</div>
-                    </div>
-                </div>
-
-                <div class="card" style="text-align: left; padding: 15px 20px; margin-top: -5px; border-left: 5px solid #3498db;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <small style="color: #7f8c8d; font-weight: bold;">⚡ ANGEL ONE SMARTAPI GATEWAY</small>
-                        <span style="font-size: 12px; font-weight: bold; color: {'#27ae60' if angel_info.get('connected') else '#e74c3c'};">{angel_badge}</span>
-                    </div>
-                    <div style="font-size: 14px; margin-top: 8px; display: flex; gap: 20px; flex-wrap: wrap;">
-                        <div>Client Code: <b>{angel_client}</b></div>
-                        <div>Account Name: <b>{angel_name}</b></div>
-                        <div>Auth Mode: <b>TOTP Auto-Handshake</b></div>
-                        <div>Execution: <b style="color: #2980b9;">🛡️ Canary Virtual Locked</b></div>
-                    </div>
-                </div>
-
-                <div class="card" style="text-align: left; padding: 15px 20px; margin-top: 15px; border-left: 5px solid #27ae60;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <small style="color: #7f8c8d; font-weight: bold;">⚡ DHANHQ BROKER GATEWAY</small>
-                        <span style="font-size: 12px; font-weight: bold; color: {'#27ae60' if dhan_info.get('connected') else '#e74c3c'};">{dhan_badge}</span>
-                    </div>
-                    <div style="font-size: 14px; margin-top: 8px; display: flex; gap: 20px; flex-wrap: wrap;">
-                        <div>Client ID: <b>{dhan_client}</b></div>
-                        <div>Ledger Balance: <b>₹{dhan_balance:.2f}</b> (Safe ₹0 Risk)</div>
-                        <div>Token Validity: <b>{dhan_validity}</b></div>
-                        <div>Execution: <b style="color: #2980b9;">🛡️ Canary Virtual Locked</b></div>
-                        <div><a href="/update_token" style="color: #2980b9; text-decoration: underline; font-weight: bold;">🔑 1-Tap Renew Token</a></div>
-                    </div>
-                </div>
-
-                <h3>Current Live Position</h3>
-                {active_html}
-
-                <h3>Paper Trades Ledger (Audit Trail)</h3>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Trade ID</th>
-                            <th>Time</th>
-                            <th>Strike</th>
-                            <th>Entry</th>
-                            <th>SL</th>
-                            <th>Target</th>
-                            <th>Exit</th>
-                            <th>P&L</th>
-                            <th>Reason</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {trades_html if trades_html else "<tr><td colspan='9' style='text-align: center; color: #95a5a6;'>No trades executed yet. System is armed and waiting.</td></tr>"}
-                    </tbody>
-                </table>
-            </div>
-        </body>
-        </html>
-        """
-        self._send_html(200, html)
+            import dashboard
+            html = dashboard.render_dashboard_html()
+            self._send_html(200, html)
+        except Exception as e:
+            logger.error(f"Dashboard render exception: {e}")
+            self._send_json(500, {"error": "Dashboard render failed", "detail": str(e)})
 
     def handle_update_token_page(self, notice: str = ""):
         status = dhan_connector.get_connection_status()
