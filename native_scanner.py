@@ -271,7 +271,8 @@ class NativeMarketScanner:
         # 4. Loosely Coupled Confluence Advisory
         oi_advisory = ""
         try:
-            strike = risk_manager.get_atm_strike(trade_params["spot_price"], "BUY" in trade_params["signal_type"])
+            is_call = "CE" in trade_params["signal_type"].upper()
+            strike = risk_manager.get_atm_strike(trade_params["spot_price"], is_call)
             oi_eval = option_chain_shield.evaluate_signal_confluence(
                 trade_params["signal_type"], 
                 trade_params["spot_price"], 

@@ -73,10 +73,21 @@ def fetch_live_nse_option_chain() -> Optional[Dict[str, Any]]:
         ce_ltp = float(ce_info.get("lastPrice", 0.0))
         pe_ltp = float(pe_info.get("lastPrice", 0.0))
         
+        # Build full strike-level lookup table for exact active position monitoring
+        strikes_map = {}
+        for r in expiry_data:
+            sp = int(r.get("strikePrice", 0))
+            if sp > 0:
+                strikes_map[sp] = {
+                    "CE": r.get("CE", {}),
+                    "PE": r.get("PE", {})
+                }
+
         return {
             "spot": underlying,
             "expiry": nearest_expiry,
             "atm_strike": atm_strike,
+            "strikes": strikes_map,
             "ce_ltp": ce_ltp,
             "pe_ltp": pe_ltp,
             "ce_ask": float(ce_info.get("askPrice") or (ce_ltp + 0.6)),
@@ -100,6 +111,48 @@ def fetch_live_nse_option_chain() -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.warning(f"Live option chain fetch failed, falling back to simulated: {e}")
         return None
+
+def get_option_quote_by_strike(target_strike: int, is_call: bool, spot_price: float = 25050.0) -> Dict[str, Any]:
+    """
+    Returns real live option quote for a SPECIFIC held strike (e.g. 25200PE or 25100CE).
+    Guarantees exact position tracking and eliminates floating ATM strike leak.
+    """
+    snapshot = get_oi_snapshot(spot_price)
+    strikes_map = snapshot.get("strikes", {})
+    expiry = snapshot.get("expiry", "Weekly")
+    
+    if target_strike in strikes_map:
+        side_key = "CE" if is_call else "PE"
+        info = strikes_map[target_strike].get(side_key, {})
+        ltp = float(info.get("lastPrice", 0.0))
+        ask = float(info.get("askPrice") or (ltp + 0.6))
+        bid = float(info.get("bidprice") or max(1.0, ltp - 0.6))
+        delta = float(info.get("delta", 0.50 if is_call else -0.50))
+        return {
+            "strike": target_strike,
+            "symbol": f"NIFTY{target_strike}{'CE' if is_call else 'PE'}",
+            "expiry": expiry,
+            "ltp": ltp,
+            "ask": ask,
+            "bid": bid,
+            "delta": delta,
+            "pcr": snapshot.get("pcr", 1.0),
+            "call_wall": snapshot.get("call_wall_resistance", target_strike + 150),
+            "put_wall": snapshot.get("put_wall_support", target_strike - 150)
+        }
+    
+    # Strike not found in chain snapshot - do NOT return wrong ATM strike quote to avoid false SL
+    logger.warning(f"Target strike {target_strike} not found in option chain snapshot.")
+    return {
+        "strike": target_strike,
+        "symbol": f"NIFTY{target_strike}{'CE' if is_call else 'PE'}",
+        "expiry": expiry,
+        "ltp": 0.0,
+        "ask": 0.0,
+        "bid": 0.0,
+        "delta": 0.50 if is_call else -0.50,
+        "error": f"Strike {target_strike} not found in chain snapshot"
+    }
 
 def get_real_option_quote(spot_price: float, is_call: bool) -> Dict[str, Any]:
     """
@@ -139,11 +192,12 @@ def get_simulated_live_oi_structure(spot_price: float = 25050.0) -> Dict[str, An
     Calculates strike clusters centered around ATM spot.
     """
     atm_strike = round(spot_price / 50.0) * 50
-    strikes = [atm_strike + (i * 50) for i in range(-5, 6)]
+    strikes = [atm_strike + (i * 50) for i in range(-20, 21)]
     
     # Structural institutional OI distribution around spot
     call_oi = {}
     put_oi = {}
+    sim_strikes = {}
     
     for s in strikes:
         diff = s - spot_price
@@ -158,6 +212,14 @@ def get_simulated_live_oi_structure(spot_price: float = 25050.0) -> Dict[str, An
             
         call_oi[s] = c_oi
         put_oi[s] = p_oi
+
+        # Synthetic strike quotes
+        c_est = max(1.0, max(0.0, spot_price - s) + 120.0 - abs(diff) * 0.15)
+        p_est = max(1.0, max(0.0, s - spot_price) + 120.0 - abs(diff) * 0.15)
+        sim_strikes[s] = {
+            "CE": {"lastPrice": round(c_est, 2), "askPrice": round(c_est + 0.6, 2), "bidprice": round(max(1.0, c_est - 0.6), 2), "delta": 0.50 if diff <= 0 else 0.35},
+            "PE": {"lastPrice": round(p_est, 2), "askPrice": round(p_est + 0.6, 2), "bidprice": round(max(1.0, p_est - 0.6), 2), "delta": -0.50 if diff >= 0 else -0.35}
+        }
 
     # Identify major walls
     call_wall = max(call_oi.keys(), key=lambda k: call_oi[k])
@@ -182,6 +244,7 @@ def get_simulated_live_oi_structure(spot_price: float = 25050.0) -> Dict[str, An
     return {
         "spot": spot_price,
         "atm_strike": atm_strike,
+        "strikes": sim_strikes,
         "call_wall_resistance": call_wall,
         "put_wall_support": put_wall,
         "call_wall_oi": call_oi[call_wall],
@@ -218,6 +281,7 @@ def get_oi_snapshot(spot_price: float = 25050.0) -> Dict[str, Any]:
         return {
             "spot": spot_price,
             "atm_strike": round(spot_price / 50.0) * 50,
+            "strikes": {},
             "call_wall_resistance": round(spot_price / 50.0) * 50 + 100,
             "put_wall_support": round(spot_price / 50.0) * 50 - 100,
             "pcr": 1.0,
@@ -242,7 +306,7 @@ def evaluate_signal_confluence(signal_type: str, spot_price: float, strike: int)
         call_wall = data["call_wall_resistance"]
         put_wall = data["put_wall_support"]
         
-        is_call = "CE" in signal_type.upper() or "BUY" in signal_type.upper()
+        is_call = "CE" in signal_type.upper() or ("BUY" in signal_type.upper() and not any(k in signal_type.upper() for k in ["PE", "PUT", "SHORT"]))
         
         if is_call:
             # Buying Call into a Call Wall (Resistance)

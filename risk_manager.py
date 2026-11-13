@@ -223,7 +223,7 @@ def calculate_trade_parameters(signal_data: Dict[str, Any]) -> Dict[str, Any]:
     target_price = round(ask_fill + target_points, 2)
     
     return {
-        "signal_type": "BUY_CE" if is_call else "SELL_PE",
+        "signal_type": "BUY_CE" if is_call else "BUY_PE",
         "symbol": symbol,
         "spot_price": spot,
         "entry_price": ask_fill, # Real fill price accounting for Ask spread

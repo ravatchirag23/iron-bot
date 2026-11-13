@@ -520,14 +520,19 @@ def start_position_monitor_thread():
                         logger.error(f"Macro radar briefing error: {e}")
                     last_8am_date = today_str
 
-                # B. Position Monitor
+                # B. Position Monitor (Exact Strike-Level Tracking)
                 active = database.get_active_trade()
                 if active:
                     symbol = active["symbol"]
                     is_call = "CE" in symbol
                     spot = float(active.get("spot_price", 25050.0))
                     
-                    quote = option_chain_shield.get_real_option_quote(spot, is_call)
+                    # Extract held strike from symbol (e.g. NIFTY25200PE -> 25200)
+                    import re
+                    strike_match = re.search(r'NIFTY(\d+)', symbol)
+                    held_strike = int(strike_match.group(1)) if strike_match else round(spot / 50.0) * 50
+                    
+                    quote = option_chain_shield.get_option_quote_by_strike(held_strike, is_call, spot_price=spot)
                     live_ltp = float(quote.get("ltp", 0.0))
                     
                     if live_ltp > 0.0:

@@ -111,6 +111,7 @@ class TestIronArmorRulesValidation(unittest.TestCase):
     """Tests all 14 Iron Armor risk filter rules."""
     def setUp(self):
         database.reset_daily_limits()
+        database.reset_daily_limits("2026-11-11")
 
     def test_market_hours_rule(self):
         # Before 9:30 AM
