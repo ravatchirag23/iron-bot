@@ -510,7 +510,10 @@ def start_position_monitor_thread():
                 today_str = now_ist.strftime("%Y-%m-%d")
                 if now_ist.hour == 8 and last_8am_date != today_str:
                     logger.info("[DAEMON] Triggering 8:00 AM IST Pre-Market Handshake...")
-                    dhan_connector.run_8am_handshake()
+                    try:
+                        angel_connector.run_8am_handshake()
+                    except Exception as e:
+                        logger.error(f"Angel handshake error: {e}")
                     last_8am_date = today_str
 
                 # B. Position Monitor

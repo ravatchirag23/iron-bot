@@ -308,7 +308,7 @@ def run_8am_handshake(force: bool = False) -> Dict[str, Any]:
 
     # If completely disconnected / expired
     msg = (
-        "🚨 *8:00 AM PRE-MARKET HANDSHAKE: RED (ACTION REQUIRED)*\n\n"
+        "🚨 *8:00 AM PRE-MARKET HANDSHAKE: RED - ACTION REQUIRED*\n\n"
         "❌ DhanHQ Access Token is EXPIRED or Invalid!\n\n"
         "👉 *1-Tap Quick Renew:* Click below to paste new 24h token:\n"
         "https://iron-bot-yfo6.onrender.com/update_token"

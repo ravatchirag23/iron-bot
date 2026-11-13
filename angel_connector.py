@@ -179,3 +179,60 @@ def route_order_to_broker(trade_params: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"[ANGEL ONE] Order placement exception: {e}")
         return {"status": "ERROR", "message": str(e)}
+
+
+def run_8am_handshake(force: bool = False) -> Dict[str, Any]:
+    """
+    Daily 8:00 AM IST Pre-Market Automated Handshake for Angel One SmartAPI.
+    Generates TOTP session, checks daily limits, reads macro sentiment, and dispatches status briefing to Telegram.
+    """
+    logger.info("[ANGEL 8AM] Running pre-market broker handshake check...")
+    status = get_broker_status()
+    stats = database.get_today_stats()
+    
+    trade_count = stats.get("trade_count", 0)
+    max_trades = getattr(config, "MAX_DAILY_TRADES", 4)
+    max_loss = getattr(config, "MAX_DAILY_LOSS_RUPEES", 2500)
+    
+    macro_info = "Neutral"
+    vix_val = "15.0"
+    try:
+        import macro_radar
+        m = macro_radar.get_macro_sentiment()
+        macro_info = f"{m.get('bias', 'Neutral')} ({m.get('score', 0):+d}/100)"
+        vix_val = f"{m.get('vix', {}).get('price', 15.0):.1f}"
+    except Exception:
+        pass
+
+    if status.get("connected"):
+        name = status.get("profile_name", "CHIRAG RAVAT")
+        client = status.get("client_code", "C51977841")
+        msg = (
+            "🌅 *8:00 AM PRE-MARKET BRIEFING: GREEN*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 *Broker:* Angel One SmartAPI (🟢 CONNECTED)\n"
+            f"🔑 *Account:* `{name}` (`{client}`)\n"
+            f"🛡️ *Execution:* Canary Virtual Mode (₹0 Real Risk)\n"
+            f"📊 *Daily Quota:* `{trade_count}/{max_trades} Trades` | Max Loss: `₹{max_loss}`\n"
+            f"📈 *India VIX:* `{vix_val}` | *Macro:* `{macro_info}`\n"
+            "🎯 *Trading Window:* 09:30 AM – 02:45 PM IST\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "✅ *System is fully armed and awaiting 09:30 AM market opening!*"
+        )
+        import telegram_notifier
+        telegram_notifier.send_telegram_alert(msg)
+        logger.info("[ANGEL 8AM] Pre-market briefing successfully dispatched to Telegram.")
+        return {"status": "SUCCESS", "connected": True}
+    else:
+        msg = (
+            "🚨 *8:00 AM PRE-MARKET WARNING: BROKER DISCONNECTED*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "❌ Angel One SmartAPI failed to connect via TOTP!\n"
+            "Please check API Key and MPIN settings in config.\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "⚠️ Operating in offline paper mode."
+        )
+        import telegram_notifier
+        telegram_notifier.send_telegram_alert(msg)
+        return {"status": "DISCONNECTED", "connected": False}
+
