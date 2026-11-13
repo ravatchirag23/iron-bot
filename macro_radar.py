@@ -232,7 +232,7 @@ def send_morning_briefing() -> bool:
         f"🎯 *MACRO BIAS:* {macro['bias']} (Score: `{macro['score']:+d}/100`)\n"
         f"💡 *Desk Advisory:* {macro['advisory']}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🔒 *Iron Bot Status:* Armed on AWS EC2 Mumbai (1-Trade Rule Active)"
+        f"🔒 *Iron Bot Status:* Armed on AWS EC2 Mumbai ({getattr(config, 'MAX_DAILY_TRADES', 4)}-Trades / Day Quota Active)"
     )
     return telegram_notifier.send_telegram_alert(msg)
 
