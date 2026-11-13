@@ -18,6 +18,7 @@ import logging
 import ssl
 from typing import Dict, Any, Tuple
 import telegram_notifier
+import config
 
 logger = logging.getLogger("IronBot.MacroRadar")
 
