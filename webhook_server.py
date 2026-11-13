@@ -64,6 +64,10 @@ class WebhookHandler(BaseHTTPRequestHandler):
             import dashboard
             state = dashboard.get_live_dashboard_state()
             self._send_json(200, state)
+        elif self.path == "/api/refresh_macro":
+            import macro_radar
+            data = macro_radar.get_macro_sentiment(force=True)
+            self._send_json(200, data)
         elif self.path == "/trades":
             trades = database.get_all_trades(50)
             self._send_json(200, {"trades": trades})
@@ -392,6 +396,14 @@ def start_position_monitor_thread():
 def start_server():
     start_position_monitor_thread()
     
+    # Start Continuous Global Macro Radar Worker (12s background polling)
+    try:
+        import macro_radar
+        macro_radar.start_macro_background_worker(interval_seconds=12)
+        logger.info("⚡ Continuous Global Macro Radar worker started successfully (12s refresh)!")
+    except Exception as e:
+        logger.warning(f"Macro worker startup exception: {e}")
+
     # Start Autonomous Native Market Scanner (Zero-Dependency In-House Engine)
     try:
         import native_scanner

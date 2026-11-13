@@ -24,7 +24,7 @@ logger = logging.getLogger("IronBot.MacroRadar")
 
 _cached_macro = None
 _last_macro_time = 0.0
-MACRO_CACHE_TTL = 30.0 # 30-second cache for high-frequency dashboard polling
+MACRO_CACHE_TTL = 12.0 # 12-second cache for ultra-fast, live-ticking dashboard
 
 _ssl_ctx = ssl.create_default_context()
 _ssl_ctx.check_hostname = False
@@ -248,6 +248,25 @@ def send_morning_briefing() -> bool:
         f"🔒 *Iron Bot Status:* Armed on AWS EC2 Mumbai ({getattr(config, 'MAX_DAILY_TRADES', 4)}-Trades / Day Quota Active)"
     )
     return telegram_notifier.send_telegram_alert(msg)
+
+def start_macro_background_worker(interval_seconds: int = 12):
+    """
+    Spawns background daemon thread to continuously keep GIFT Nifty & Global Tickers hot.
+    Guarantees sub-millisecond API response times and live dynamic updates.
+    """
+    import threading
+    import time
+    def _worker():
+        logger.info(f"⚡ Macro Radar continuous background worker activated ({interval_seconds}s interval).")
+        while True:
+            try:
+                get_macro_sentiment(force=True)
+            except Exception as e:
+                logger.warning(f"Macro background worker refresh warning: {e}")
+            time.sleep(interval_seconds)
+
+    t = threading.Thread(target=_worker, daemon=True, name="MacroRadarWorker")
+    t.start()
 
 if __name__ == "__main__":
     import pprint

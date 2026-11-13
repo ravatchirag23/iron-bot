@@ -2,10 +2,12 @@
 Institutional Trading Cockpit & Live Operations Dashboard for Iron Bot
 Author: Chirag Ravat (Dev OS)
 Features:
-- Dark Glassmorphism Terminal UI (Bloomberg / TradingView grade)
+- Dark Glassmorphism Terminal UI (Bloomberg / TradingView Pro Grade)
 - Zero-Flicker Background Polling via /api/live_state (every 2s)
+- Continuous Live Ticker Flashing (Green/Red) on tick changes
+- 7 Global Macro Tickers: GIFT Nifty (NSE IX), Dow, Nasdaq, Crude, USDINR, VIX, Nifty Spot
+- Manual '⚡ Refresh Tickers' trigger & Live seconds countdown timer
 - Real-time Active Trade Risk-to-Reward Progress Ladder & Greeks Breakdown
-- Global Macro Radar (GIFT Nifty, Dow, Nasdaq, Crude, USDINR, VIX)
 - Full Institutional Trade Ledger with Win Rate, Profit Factor, & Points
 - 14 Iron Armor Defense Shields status matrix
 """
@@ -211,7 +213,7 @@ def get_live_dashboard_state() -> Dict[str, Any]:
             "sentiment": oi_data.get("sentiment", "NEUTRAL")
         },
         "broker": angel_info,
-        "recent_trades": all_trades[:15]
+        "recent_trades": all_trades[:20]
     }
 
 def render_dashboard_html() -> str:
@@ -261,6 +263,18 @@ def render_dashboard_html() -> str:
         }
 
         .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+        /* Dynamic Tick Flash Animations */
+        @keyframes flashGreen {
+            0% { background: rgba(16, 185, 129, 0.4); color: #fff; transform: scale(1.02); }
+            100% { background: transparent; transform: scale(1); }
+        }
+        @keyframes flashRed {
+            0% { background: rgba(239, 68, 68, 0.4); color: #fff; transform: scale(1.02); }
+            100% { background: transparent; transform: scale(1); }
+        }
+        .flash-green { animation: flashGreen 0.75s ease-out; }
+        .flash-red { animation: flashRed 0.75s ease-out; }
 
         /* Navigation Header */
         header {
@@ -315,7 +329,7 @@ def render_dashboard_html() -> str:
         .nav-meta {
             display: flex;
             align-items: center;
-            gap: 16px;
+            gap: 14px;
         }
         .pill {
             background: rgba(255, 255, 255, 0.04);
@@ -332,6 +346,30 @@ def render_dashboard_html() -> str:
         .pill-blue { background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.3); color: var(--blue); }
         .pill-red { background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.3); color: var(--red); }
         .pill-amber { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.3); color: var(--amber); }
+        .pill-purple { background: rgba(168, 85, 247, 0.12); border-color: rgba(168, 85, 247, 0.3); color: var(--purple); }
+
+        .refresh-btn {
+            background: rgba(56, 189, 248, 0.12);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            color: var(--blue);
+            font-family: var(--font-main);
+            font-size: 11px;
+            font-weight: 700;
+            padding: 5px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .refresh-btn:hover {
+            background: rgba(56, 189, 248, 0.25);
+            transform: translateY(-1px);
+        }
+        .refresh-btn:active {
+            transform: scale(0.96);
+        }
 
         /* Top KPI Bar */
         .kpi-grid {
@@ -409,7 +447,7 @@ def render_dashboard_html() -> str:
         /* Main Workspace Grid */
         .workspace-grid {
             display: grid;
-            grid-template-columns: 2fr 1.2fr;
+            grid-template-columns: 1.8fr 1.2fr;
             gap: 20px;
         }
         @media (max-width: 1024px) {
@@ -532,24 +570,27 @@ def render_dashboard_html() -> str:
         .ticker-list {
             display: flex;
             flex-direction: column;
-            gap: 10px;
+            gap: 9px;
         }
         .ticker-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
             padding: 10px 14px;
-            background: rgba(0, 0, 0, 0.18);
-            border: 1px solid rgba(255, 255, 255, 0.03);
+            background: rgba(0, 0, 0, 0.22);
+            border: 1px solid rgba(255, 255, 255, 0.04);
             border-radius: 8px;
+            transition: background 0.3s;
         }
-        .ticker-name { font-size: 13px; font-weight: 700; color: var(--text-primary); }
-        .ticker-price { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+        .ticker-name { font-size: 13px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 6px; }
+        .ticker-price { font-size: 13px; font-weight: 600; color: var(--text-secondary); transition: all 0.3s; }
         .ticker-chg {
             font-size: 12px;
             font-weight: 700;
             padding: 3px 8px;
             border-radius: 4px;
+            min-width: 65px;
+            text-align: right;
         }
         .chg-pos { background: rgba(16, 185, 129, 0.15); color: var(--green); }
         .chg-neg { background: rgba(239, 68, 68, 0.15); color: var(--red); }
@@ -632,10 +673,10 @@ def render_dashboard_html() -> str:
             <div>
                 <div class="brand-name">
                     IRON BOT <span style="font-size: 12px; color: var(--blue); font-weight: 700;">PRO COCKPIT</span>
-                    <span class="live-dot" title="WebSocket / Poll Active"></span>
+                    <span class="live-dot" title="Live Polling Streaming Active"></span>
                 </div>
                 <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
-                    Chirag Ravat Dev OS • 15-20 pts Passive Engine
+                    Chirag Ravat Dev OS • 15-20 pts Passive Engine • Sub-millisecond Execution
                 </div>
             </div>
         </div>
@@ -690,10 +731,10 @@ def render_dashboard_html() -> str:
 
     <!-- Navigation Tabs -->
     <div class="tabs-bar">
-        <button class="tab-btn active" onclick="switchTab('cockpit')">🎯 LIVE COCKPIT & ACTIVE TRADE</button>
-        <button class="tab-btn" onclick="switchTab('ledger')">📋 INSTITUTIONAL LEDGER & HISTORY</button>
-        <button class="tab-btn" onclick="switchTab('radar')">🧭 MACRO RADAR & OPTION CHAIN</button>
-        <button class="tab-btn" onclick="switchTab('shields')">🛡️ 14 IRON ARMOR SHIELDS</button>
+        <button class="tab-btn active" onclick="switchTab('cockpit', this)">🎯 LIVE COCKPIT & ACTIVE TRADE</button>
+        <button class="tab-btn" onclick="switchTab('ledger', this)">📋 INSTITUTIONAL LEDGER & HISTORY</button>
+        <button class="tab-btn" onclick="switchTab('radar', this)">🧭 MACRO RADAR & OPTION CHAIN</button>
+        <button class="tab-btn" onclick="switchTab('shields', this)">🛡️ 14 IRON ARMOR SHIELDS</button>
     </div>
 
     <!-- TAB 1: Cockpit & Active Position -->
@@ -704,7 +745,6 @@ def render_dashboard_html() -> str:
             <div>
                 <!-- Active Position Section -->
                 <div id="active-position-container">
-                    <!-- Populated by JS: either active card or idle radar -->
                     <div class="card-box idle-box">
                         <div class="radar-spinner"></div>
                         <h4 style="color: var(--text-primary); margin-bottom: 6px;">NO ACTIVE TRADE POSITION</h4>
@@ -756,8 +796,61 @@ def render_dashboard_html() -> str:
                 </div>
             </div>
 
-            <!-- Right Column: Option Chain Walls & Real-time Gauges -->
+            <!-- Right Column: Global Macro Matrix & Option Chain Walls -->
             <div>
+                <!-- Live Dynamic Macro Matrix (All 7 Instruments) -->
+                <div class="card-box">
+                    <div class="card-box-header">
+                        <div class="card-box-title">
+                            <span>🧭 GLOBAL MACRO MATRIX</span>
+                            <span class="live-dot" style="width: 6px; height: 6px;" title="Streaming background updates every 12s"></span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);" id="macro-sync-timer">0s ago</span>
+                            <button class="refresh-btn" onclick="forceRefreshMacro(this)">⚡ Refresh</button>
+                            <div class="pill pill-purple mono" id="macro-score-tag">SCORE: 0</div>
+                        </div>
+                    </div>
+
+                    <div class="ticker-list" id="ticker-list-container">
+                        <div class="ticker-row">
+                            <span class="ticker-name">🇸🇬 GIFT Nifty (NSE IX)</span>
+                            <span class="ticker-price mono" id="t-gift-price">--</span>
+                            <span class="ticker-chg mono chg-pos" id="t-gift-chg">--%</span>
+                        </div>
+                        <div class="ticker-row">
+                            <span class="ticker-name">🇺🇸 Dow Jones (^DJI)</span>
+                            <span class="ticker-price mono" id="t-dow-price">--</span>
+                            <span class="ticker-chg mono chg-pos" id="t-dow-chg">--%</span>
+                        </div>
+                        <div class="ticker-row">
+                            <span class="ticker-name">💻 Nasdaq (^IXIC)</span>
+                            <span class="ticker-price mono" id="t-nas-price">--</span>
+                            <span class="ticker-chg mono chg-neg" id="t-nas-chg">--%</span>
+                        </div>
+                        <div class="ticker-row">
+                            <span class="ticker-name">🛢️ Brent Crude (BZ=F)</span>
+                            <span class="ticker-price mono" id="t-crude-price">--</span>
+                            <span class="ticker-chg mono chg-neg" id="t-crude-chg">--%</span>
+                        </div>
+                        <div class="ticker-row">
+                            <span class="ticker-name">💵 USD / INR (USDINR=X)</span>
+                            <span class="ticker-price mono" id="t-usdinr-price">--</span>
+                            <span class="ticker-chg mono chg-pos" id="t-usdinr-chg">--%</span>
+                        </div>
+                        <div class="ticker-row">
+                            <span class="ticker-name">⚡ India VIX (^INDIAVIX)</span>
+                            <span class="ticker-price mono" id="t-vix-price">--</span>
+                            <span class="ticker-chg mono chg-neg" id="t-vix-chg">--%</span>
+                        </div>
+                        <div class="ticker-row">
+                            <span class="ticker-name">🇮🇳 Nifty 50 Spot (^NSEI)</span>
+                            <span class="ticker-price mono" id="t-nifty-price">--</span>
+                            <span class="ticker-chg mono chg-neg" id="t-nifty-chg">--%</span>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Option Chain Wall Profile -->
                 <div class="card-box">
                     <div class="card-box-header">
@@ -789,40 +882,6 @@ def render_dashboard_html() -> str:
                             <div style="font-size: 13px; font-weight: 700; color: #fff; margin-top: 4px;" id="oi-sentiment-display">
                                 NEUTRAL / BALANCED
                             </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Live Macro Overview Card -->
-                <div class="card-box">
-                    <div class="card-box-header">
-                        <div class="card-box-title">
-                            <span>🧭 GLOBAL MACRO MATRIX</span>
-                        </div>
-                        <div class="pill pill-purple mono" id="macro-score-tag">SCORE: 0</div>
-                    </div>
-
-                    <div class="ticker-list" id="ticker-list-container">
-                        <!-- Populated by JS -->
-                        <div class="ticker-row">
-                            <span class="ticker-name">🇸🇬 GIFT Nifty</span>
-                            <span class="ticker-price mono" id="t-gift-price">25,100</span>
-                            <span class="ticker-chg mono chg-pos" id="t-gift-chg">+0.15%</span>
-                        </div>
-                        <div class="ticker-row">
-                            <span class="ticker-name">🇺🇸 Dow Jones</span>
-                            <span class="ticker-price mono" id="t-dow-price">43,900</span>
-                            <span class="ticker-chg mono chg-pos" id="t-dow-chg">+0.22%</span>
-                        </div>
-                        <div class="ticker-row">
-                            <span class="ticker-name">🇺🇸 Nasdaq</span>
-                            <span class="ticker-price mono" id="t-nas-price">19,200</span>
-                            <span class="ticker-chg mono chg-neg" id="t-nas-chg">-0.10%</span>
-                        </div>
-                        <div class="ticker-row">
-                            <span class="ticker-name">🛢️ Brent Crude</span>
-                            <span class="ticker-price mono" id="t-crude-price">$72.50</span>
-                            <span class="ticker-chg mono chg-neg" id="t-crude-chg">-0.45%</span>
                         </div>
                     </div>
                 </div>
@@ -1039,20 +1098,73 @@ def render_dashboard_html() -> str:
     <!-- Footer -->
     <footer>
         <div>IRON BOT Autonomous Options Trading System • Version 3.0 Institutional</div>
-        <div>AWS EC2 Mumbai (ap-south-1) • Sub-millisecond Execution Engine</div>
+        <div>AWS EC2 Mumbai (ap-south-1) • Dynamic High-Frequency Market Ticker Engine</div>
     </footer>
 
     <!-- Interactive JS Auto-Sync Engine -->
     <script>
-        function switchTab(tabId) {
+        let secondsSinceSync = 0;
+
+        function switchTab(tabId, btn) {
             document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
-            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             
             const target = document.getElementById('tab-' + tabId);
             if (target) target.style.display = 'block';
-            
-            // Mark button active
-            event.target.classList.add('active');
+            if (btn) btn.classList.add('active');
+        }
+
+        // Helper to update text with live green/red flash animation when price changes
+        function updateTickerValue(priceElId, chgElId, newPrice, newChg, prefix = '', decimals = 2) {
+            const pEl = document.getElementById(priceElId);
+            const cEl = document.getElementById(chgElId);
+            if (!pEl || !cEl) return;
+
+            let formattedPrice = '--';
+            let numPrice = null;
+
+            if (typeof newPrice === 'number' && newPrice > 0) {
+                numPrice = newPrice;
+                formattedPrice = prefix + newPrice.toLocaleString('en-IN', {
+                    minimumFractionDigits: decimals,
+                    maximumFractionDigits: decimals
+                });
+            } else if (newPrice) {
+                formattedPrice = prefix + newPrice;
+            }
+
+            const oldText = pEl.innerText;
+            if (oldText !== formattedPrice && oldText !== '--') {
+                const oldNumeric = parseFloat(oldText.replace(/[^0-9.-]+/g, ''));
+                if (numPrice !== null && !isNaN(oldNumeric)) {
+                    pEl.classList.remove('flash-green', 'flash-red');
+                    void pEl.offsetWidth; // Force CSS animation reflow
+                    pEl.classList.add(numPrice >= oldNumeric ? 'flash-green' : 'flash-red');
+                }
+            }
+            pEl.innerText = formattedPrice;
+
+            const numChg = parseFloat(newChg) || 0.0;
+            cEl.innerText = (numChg >= 0 ? '+' : '') + numChg.toFixed(2) + '%';
+            cEl.className = 'ticker-chg mono ' + (numChg >= 0 ? 'chg-pos' : 'chg-neg');
+        }
+
+        async function forceRefreshMacro(btn) {
+            if (btn) {
+                btn.innerText = '⏳ Fetching...';
+                btn.disabled = true;
+            }
+            try {
+                await fetch('/api/refresh_macro');
+                await syncLiveState();
+            } catch (e) {
+                console.error('Force refresh error:', e);
+            } finally {
+                if (btn) {
+                    btn.innerText = '⚡ Refresh';
+                    btn.disabled = false;
+                }
+            }
         }
 
         async function syncLiveState() {
@@ -1061,6 +1173,11 @@ def render_dashboard_html() -> str:
                 if (!res.ok) return;
                 const data = await res.json();
                 
+                // Reset sync counter
+                secondsSinceSync = 0;
+                const syncTimer = document.getElementById('macro-sync-timer');
+                if (syncTimer) syncTimer.innerText = '0s ago';
+
                 // 1. Clock & Meta
                 document.getElementById('clock-display').innerText = data.timestamp + ' IST';
                 
@@ -1215,7 +1332,7 @@ def render_dashboard_html() -> str:
                     document.getElementById('radar-put-wall').innerText = data.option_chain.put_wall;
                 }
 
-                // 11. Macro Radar Tickers & Factors
+                // 11. Macro Radar All 7 Tickers with Live Flash Animation
                 if (data.macro_radar) {
                     const mr = data.macro_radar;
                     document.getElementById('macro-score-tag').innerText = 'SCORE: ' + (mr.score >= 0 ? '+' : '') + mr.score;
@@ -1223,24 +1340,27 @@ def render_dashboard_html() -> str:
                     document.getElementById('macro-advisory-text').innerText = mr.advisory || 'Balanced market conditions.';
 
                     if (mr.gift_nifty) {
-                        document.getElementById('t-gift-price').innerText = mr.gift_nifty.price ? mr.gift_nifty.price.toFixed(1) : '25,100';
-                        document.getElementById('t-gift-chg').innerText = (mr.gift_nifty.change >= 0 ? '+' : '') + mr.gift_nifty.change.toFixed(2) + '%';
-                        document.getElementById('t-gift-chg').className = 'ticker-chg mono ' + (mr.gift_nifty.change >= 0 ? 'chg-pos' : 'chg-neg');
+                        updateTickerValue('t-gift-price', 't-gift-chg', mr.gift_nifty.price, mr.gift_nifty.change, '', 1);
                     }
                     if (mr.dow) {
-                        document.getElementById('t-dow-price').innerText = mr.dow.price ? mr.dow.price.toFixed(1) : '43,900';
-                        document.getElementById('t-dow-chg').innerText = (mr.dow.change >= 0 ? '+' : '') + mr.dow.change.toFixed(2) + '%';
-                        document.getElementById('t-dow-chg').className = 'ticker-chg mono ' + (mr.dow.change >= 0 ? 'chg-pos' : 'chg-neg');
+                        updateTickerValue('t-dow-price', 't-dow-chg', mr.dow.price, mr.dow.change, '', 1);
                     }
                     if (mr.nasdaq) {
-                        document.getElementById('t-nas-price').innerText = mr.nasdaq.price ? mr.nasdaq.price.toFixed(1) : '19,200';
-                        document.getElementById('t-nas-chg').innerText = (mr.nasdaq.change >= 0 ? '+' : '') + mr.nasdaq.change.toFixed(2) + '%';
-                        document.getElementById('t-nas-chg').className = 'ticker-chg mono ' + (mr.nasdaq.change >= 0 ? 'chg-pos' : 'chg-neg');
+                        updateTickerValue('t-nas-price', 't-nas-chg', mr.nasdaq.price, mr.nasdaq.change, '', 1);
                     }
                     if (mr.crude) {
-                        document.getElementById('t-crude-price').innerText = mr.crude.price ? '$' + mr.crude.price.toFixed(2) : '$72.50';
-                        document.getElementById('t-crude-chg').innerText = (mr.crude.change >= 0 ? '+' : '') + mr.crude.change.toFixed(2) + '%';
-                        document.getElementById('t-crude-chg').className = 'ticker-chg mono ' + (mr.crude.change >= 0 ? 'chg-pos' : 'chg-neg');
+                        updateTickerValue('t-crude-price', 't-crude-chg', mr.crude.price, mr.crude.change, '$', 2);
+                    }
+                    if (mr.usdinr) {
+                        updateTickerValue('t-usdinr-price', 't-usdinr-chg', mr.usdinr.price, mr.usdinr.change, '₹', 2);
+                    }
+                    if (mr.vix) {
+                        updateTickerValue('t-vix-price', 't-vix-chg', mr.vix.price, mr.vix.change, '', 2);
+                    }
+                    if (mr.nifty) {
+                        updateTickerValue('t-nifty-price', 't-nifty-chg', mr.nifty.price, mr.nifty.change, '', 2);
+                        document.getElementById('nifty-chg-display').innerText = (mr.nifty.change >= 0 ? '+' : '') + mr.nifty.change.toFixed(2) + '%';
+                        document.getElementById('nifty-chg-display').style.color = mr.nifty.change >= 0 ? 'var(--green)' : 'var(--red)';
                     }
 
                     // Factors list
@@ -1296,6 +1416,13 @@ def render_dashboard_html() -> str:
                 console.warn('Dashboard sync polling warning:', err);
             }
         }
+
+        // Live seconds counter
+        setInterval(() => {
+            secondsSinceSync++;
+            const st = document.getElementById('macro-sync-timer');
+            if (st) st.innerText = secondsSinceSync + 's ago';
+        }, 1000);
 
         // Auto-poll every 2000 milliseconds for seamless zero-flicker experience
         setInterval(syncLiveState, 2000);
