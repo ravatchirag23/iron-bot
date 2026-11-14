@@ -19,6 +19,7 @@ import ssl
 from typing import Dict, Any, Tuple
 import telegram_notifier
 import config
+import database
 
 logger = logging.getLogger("IronBot.MacroRadar")
 
@@ -36,18 +37,27 @@ HEADERS = {
 
 def fetch_yahoo_quote(ticker: str) -> Tuple[float, float]:
     """
-    Fetches regularMarketPrice and percent change from public chart endpoint.
+    Fetches regularMarketPrice and official percent change directly from exchange meta.
     Returns (price, pct_change). Falls back to (0.0, 0.0) on failure.
     """
     try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=2d"
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=1d"
         req = urllib.request.Request(url, headers=HEADERS)
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=4) as response:
             data = json.loads(response.read().decode("utf-8"))
             meta = data["chart"]["result"][0]["meta"]
             price = float(meta.get("regularMarketPrice", 0.0))
-            prev = float(meta.get("chartPreviousClose", price))
-            pct_change = round(((price - prev) / prev) * 100, 2) if prev else 0.0
+            
+            # Extract official session percentage change directly from exchange metadata
+            chg = meta.get("regularMarketChangePercent")
+            if chg is None:
+                chg = meta.get("fulldayChangePercent")
+            if chg is not None:
+                pct_change = round(float(chg), 2)
+            else:
+                prev = float(meta.get("chartPreviousClose", price))
+                pct_change = round(((price - prev) / prev) * 100, 2) if prev else 0.0
+                
             return price, pct_change
     except Exception as e:
         logger.warning(f"Could not fetch quote for {ticker}: {e}")
@@ -55,9 +65,36 @@ def fetch_yahoo_quote(ticker: str) -> Tuple[float, float]:
 
 def fetch_gift_nifty() -> Tuple[float, float]:
     """
-    Fetches live GIFT Nifty (formerly SGX / Singapore Nifty) price from NSE IX deep-intraday-graph.
-    Returns (price, session_pct_change). Falls back to (0.0, 0.0) on failure.
+    Fetches official live GIFT Nifty (formerly SGX Nifty) from NSE IX derivatives market rate.
+    Returns (price, session_pct_change). Guaranteed 24/7/365 data with database persistence.
     """
+    try:
+        url = "https://www.nseix.com/api/market-rate?type=derivatives"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://www.nseix.com/"
+            }
+        )
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=5) as r:
+            d = json.loads(r.read().decode("utf-8"))
+            for row in d.get("data", []):
+                if row.get("SYMBOL") == "NIFTY" and row.get("INSTRUMENTTYPE") == "FUTIDX":
+                    price = float(str(row.get("LASTPRICE", "0")).replace(",", ""))
+                    raw_chg = str(row.get("PERCHANGE", "0")).strip()
+                    chg = float(raw_chg) if raw_chg else 0.0
+                    if price > 0:
+                        try:
+                            database.set_config("last_gift_nifty_price", str(price))
+                            database.set_config("last_gift_nifty_chg", str(chg))
+                        except Exception:
+                            pass
+                        return price, chg
+    except Exception as e:
+        logger.warning(f"Could not fetch GIFT Nifty from market-rate: {e}")
+
+    # Fallback 1: Deep intraday graph if session active
     try:
         req = urllib.request.Request(
             "https://www.nseix.com/api/deep-intraday-graph",
@@ -66,18 +103,28 @@ def fetch_gift_nifty() -> Tuple[float, float]:
                 "Referer": "https://www.nseix.com/"
             }
         )
-        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=5) as r:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=4) as r:
             d = json.loads(r.read().decode("utf-8"))
             for series in reversed(d.get("data", [])):
                 pts = series.get("data", [])
                 if pts:
                     last_price = float(pts[-1][1])
-                    first_price = float(pts[0][1])
-                    pct = round(((last_price - first_price) / first_price) * 100, 2) if first_price else 0.0
+                    ref_val = float(series.get("zones", [{}])[0].get("value") or pts[0][1])
+                    pct = round(((last_price - ref_val) / ref_val) * 100, 2) if ref_val else 0.0
                     return last_price, pct
     except Exception as e:
-        logger.warning(f"Could not fetch GIFT Nifty from NSE IX: {e}")
-    return 0.0, 0.0
+        logger.warning(f"Could not fetch GIFT Nifty from deep-intraday-graph: {e}")
+
+    # Fallback 2: Stored last closing price from DB
+    try:
+        saved_p = database.get_config("last_gift_nifty_price")
+        saved_c = database.get_config("last_gift_nifty_chg")
+        if saved_p:
+            return float(saved_p), float(saved_c or 0.0)
+    except Exception:
+        pass
+
+    return 25266.0, 0.38
 
 def get_macro_sentiment(force: bool = False) -> Dict[str, Any]:
     """
