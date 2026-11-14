@@ -228,7 +228,7 @@ def render_dashboard_html() -> str:
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
     <style>
         :root {
             --bg-base: #080c14;
@@ -932,22 +932,23 @@ def render_dashboard_html() -> str:
     <!-- TAB 1: Cockpit & Active Position -->
     <div id="tab-cockpit" class="tab-content">
 
-        <!-- HERO: TradingView Live Interactive Candlestick Radar -->
+        <!-- HERO: TradingView Lightweight Candlestick Radar -->
         <div class="card-box chart-card-box">
-            <div class="card-box-header" style="margin-bottom: 12px; padding-bottom: 10px;">
+            <div class="card-box-header" style="margin-bottom: 10px; padding-bottom: 8px;">
                 <div class="card-box-title">
-                    <span>📈 LIVE CANDLESTICK RADAR</span>
-                    <span class="live-dot" style="width: 6px; height: 6px;" title="Real-time TradingView Streaming Engine"></span>
-                    <span class="pill pill-green" style="font-size: 10px; padding: 2px 8px;">UT BOT 5M CONFLUENCE</span>
+                    <span>📈 NIFTY 50 LIVE CANDLESTICK RADAR</span>
+                    <span class="live-dot" style="width: 6px; height: 6px;" title="Real-time 5m Tape"></span>
+                    <span class="pill pill-green" style="font-size: 10px; padding: 2px 8px;">UT BOT 5M + 20 EMA</span>
+                    <span id="chart-legend-ohlc" class="mono" style="font-size: 11px; color: var(--cyan); margin-left: 10px;"></span>
                 </div>
                 <div class="chart-btn-group">
-                    <button class="chart-sym-btn active" onclick="switchChartSymbol('NSE:NIFTY', this)">🇮🇳 NIFTY 50</button>
-                    <button class="chart-sym-btn" onclick="switchChartSymbol('NSE:BANKNIFTY', this)">🏦 BANK NIFTY</button>
-                    <button class="chart-sym-btn" onclick="switchChartSymbol('NSEIX:NIFTY', this)">🇸🇬 GIFT NIFTY</button>
-                    <button class="chart-sym-btn" onclick="switchChartSymbol('FOREXCOM:SPXUSD', this)">🇺🇸 S&P 500</button>
+                    <button class="chart-sym-btn active" onclick="switchChartSymbol('^NSEI', this)">🇮🇳 NIFTY 50</button>
+                    <button class="chart-sym-btn" onclick="switchChartSymbol('^NSEBANK', this)">🏦 BANK NIFTY</button>
+                    <button class="chart-sym-btn" onclick="switchChartSymbol('^GSPC', this)">🇺🇸 S&P 500</button>
+                    <button class="refresh-btn" onclick="loadCandleData()" style="padding: 4px 10px;">🔄 Refresh</button>
                 </div>
             </div>
-            <div id="tv-chart-wrapper" style="height: 500px; width: 100%; border-radius: 10px; overflow: hidden; background: #080c14; border: 1px solid rgba(255,255,255,0.06);">
+            <div id="tv-chart-wrapper" style="height: 480px; width: 100%; border-radius: 10px; overflow: hidden; background: #080c14; border: 1px solid rgba(255,255,255,0.06); position: relative;">
                 <div id="tv-chart-container" style="height: 100%; width: 100%;"></div>
             </div>
         </div>
@@ -1361,48 +1362,117 @@ def render_dashboard_html() -> str:
             if (btn) btn.classList.add('active');
         }
 
-        // TradingView Dynamic Engine
-        function renderTradingViewChart(symbol = 'NSE:NIFTY') {
-            currentChartSymbol = symbol;
+        // TradingView Lightweight Charts Engine
+        let chartInstance = null;
+        let candleSeries = null;
+        let emaSeries = null;
+
+        function calculateEMA(data, period = 20) {
+            if (!data || data.length === 0) return [];
+            const k = 2 / (period + 1);
+            let emaArray = [];
+            let prevEma = data[0].close;
+            for (let i = 0; i < data.length; i++) {
+                const val = data[i].close;
+                const currentEma = i === 0 ? val : (val * k) + (prevEma * (1 - k));
+                prevEma = currentEma;
+                if (i >= period - 1) {
+                    emaArray.push({ time: data[i].time, value: parseFloat(currentEma.toFixed(2)) });
+                }
+            }
+            return emaArray;
+        }
+
+        async function initLightweightChart() {
             const container = document.getElementById('tv-chart-container');
-            if (!container) return;
+            if (!container || typeof LightweightCharts === 'undefined') return;
             container.innerHTML = '';
 
+            chartInstance = LightweightCharts.createChart(container, {
+                width: container.clientWidth || 800,
+                height: 480,
+                layout: {
+                    background: { color: '#080c14' },
+                    textColor: '#94a3b8',
+                    fontFamily: "'JetBrains Mono', monospace",
+                },
+                grid: {
+                    vertLines: { color: 'rgba(255, 255, 255, 0.04)' },
+                    horzLines: { color: 'rgba(255, 255, 255, 0.04)' },
+                },
+                crosshair: {
+                    mode: LightweightCharts.CrosshairMode.Normal,
+                },
+                rightPriceScale: {
+                    borderColor: 'rgba(255, 255, 255, 0.08)',
+                    autoScale: true,
+                },
+                timeScale: {
+                    borderColor: 'rgba(255, 255, 255, 0.08)',
+                    timeVisible: true,
+                    secondsVisible: false,
+                },
+            });
+
+            candleSeries = chartInstance.addCandlestickSeries({
+                upColor: '#10b981',
+                downColor: '#ef4444',
+                borderVisible: false,
+                wickUpColor: '#10b981',
+                wickDownColor: '#ef4444',
+            });
+
+            emaSeries = chartInstance.addLineSeries({
+                color: '#38bdf8',
+                lineWidth: 2,
+                title: '20 EMA',
+            });
+
+            // Crosshair move listener for live OHLC legend
+            chartInstance.subscribeCrosshairMove(param => {
+                const legend = document.getElementById('chart-legend-ohlc');
+                if (!legend) return;
+                if (!param.time || !param.seriesData.get(candleSeries)) {
+                    legend.innerText = '';
+                    return;
+                }
+                const d = param.seriesData.get(candleSeries);
+                legend.innerText = `O: ${d.open.toFixed(2)}  H: ${d.high.toFixed(2)}  L: ${d.low.toFixed(2)}  C: ${d.close.toFixed(2)}`;
+            });
+
+            // Auto-resize on window resize
+            window.addEventListener('resize', () => {
+                if (chartInstance && container) {
+                    chartInstance.applyOptions({ width: container.clientWidth });
+                }
+            });
+
+            await loadCandleData();
+        }
+
+        async function loadCandleData() {
+            if (!candleSeries || !emaSeries) return;
             try {
-                if (typeof TradingView !== 'undefined' && TradingView.widget) {
-                    tvWidgetInstance = new TradingView.widget({
-                        "autosize": true,
-                        "symbol": symbol,
-                        "interval": "5",
-                        "timezone": "Asia/Kolkata",
-                        "theme": "dark",
-                        "style": "1",
-                        "locale": "en",
-                        "toolbar_bg": "#0e1524",
-                        "enable_publishing": false,
-                        "allow_symbol_change": true,
-                        "container_id": "tv-chart-container",
-                        "hide_side_toolbar": false,
-                        "withdateranges": true,
-                        "studies": [
-                            "MASimple@tv-basicstudies",
-                            "RSI@tv-basicstudies"
-                        ],
-                        "loading_screen": { "backgroundColor": "#080c14" }
-                    });
-                } else {
-                    container.innerHTML = `<iframe style="width: 100%; height: 100%; border: none;" src="https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(symbol)}&interval=5&theme=dark&style=1&timezone=Asia%2FKolkata&locale=en"></iframe>`;
+                const res = await fetch(`/api/candles?symbol=${encodeURIComponent(currentChartSymbol)}&interval=5m&range=2d`);
+                if (!res.ok) return;
+                const json = await res.json();
+                const candles = json.candles || [];
+                if (candles.length > 0) {
+                    candleSeries.setData(candles);
+                    const emaData = calculateEMA(candles, 20);
+                    emaSeries.setData(emaData);
+                    chartInstance.timeScale().fitContent();
                 }
             } catch (err) {
-                console.warn('TradingView render fallback to iframe:', err);
-                container.innerHTML = `<iframe style="width: 100%; height: 100%; border: none;" src="https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(symbol)}&interval=5&theme=dark&style=1&timezone=Asia%2FKolkata&locale=en"></iframe>`;
+                console.warn('Candle fetch error:', err);
             }
         }
 
-        function switchChartSymbol(sym, btn) {
+        async function switchChartSymbol(sym, btn) {
             document.querySelectorAll('.chart-sym-btn').forEach(b => b.classList.remove('active'));
             if (btn) btn.classList.add('active');
-            renderTradingViewChart(sym);
+            currentChartSymbol = sym;
+            await loadCandleData();
         }
 
         // Interactive Sandbox Controls (₹0 Real Money at Risk)
@@ -1868,7 +1938,7 @@ def render_dashboard_html() -> str:
         setInterval(syncLiveState, 2000);
         // Initial sync on load
         window.addEventListener('DOMContentLoaded', () => {
-            renderTradingViewChart('NSE:NIFTY');
+            initLightweightChart();
             syncLiveState();
         });
     </script>

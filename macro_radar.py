@@ -34,6 +34,9 @@ _cached_news = []
 _last_news_time = 0.0
 NEWS_CACHE_TTL = 300.0 # 5 minutes
 
+_candles_cache = {}
+_candles_cache_time = {}
+
 _ssl_ctx = ssl.create_default_context()
 _ssl_ctx.check_hostname = False
 _ssl_ctx.verify_mode = ssl.CERT_NONE
@@ -77,6 +80,50 @@ def fetch_cnbc_news() -> List[Dict[str, str]]:
         {"title": "GIFT Nifty signals steady momentum with +0.38% lead over weekend.", "pubDate": "Live", "link": "#"},
         {"title": "Brent crude steady at $96.08 as global currency and bond markets consolidate.", "pubDate": "Live", "link": "#"}
     ]
+
+def fetch_candles(ticker: str = "^NSEI", interval: str = "5m", range_param: str = "2d") -> List[Dict[str, Any]]:
+    """
+    Fetches real-time OHLCV candlestick historical bars for Lightweight Charts.
+    Cached for 20 seconds to provide zero-lag interactive chart exploration.
+    """
+    global _candles_cache, _candles_cache_time
+    cache_key = f"{ticker}_{interval}_{range_param}"
+    now = time.time()
+    if cache_key in _candles_cache and (now - _candles_cache_time.get(cache_key, 0)) < 20.0:
+        return _candles_cache[cache_key]
+
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={range_param}"
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            result = data["chart"]["result"][0]
+            timestamps = result.get("timestamp", [])
+            quote = result["indicators"]["quote"][0]
+            opens = quote.get("open", [])
+            highs = quote.get("high", [])
+            lows = quote.get("low", [])
+            closes = quote.get("close", [])
+            volumes = quote.get("volume", [])
+            
+            candles = []
+            for i in range(len(timestamps)):
+                if opens[i] is not None and closes[i] is not None:
+                    candles.append({
+                        "time": int(timestamps[i]),
+                        "open": round(float(opens[i]), 2),
+                        "high": round(float(highs[i]), 2),
+                        "low": round(float(lows[i]), 2),
+                        "close": round(float(closes[i]), 2),
+                        "volume": int(volumes[i] or 0)
+                    })
+            if candles:
+                _candles_cache[cache_key] = candles
+                _candles_cache_time[cache_key] = now
+                return candles
+    except Exception as e:
+        logger.warning(f"Candles fetch for {ticker} failed: {e}")
+    return _candles_cache.get(cache_key, [])
 
 def fetch_yahoo_quote(ticker: str) -> Tuple[float, float]:
     """

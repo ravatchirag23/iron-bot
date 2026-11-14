@@ -68,6 +68,18 @@ class WebhookHandler(BaseHTTPRequestHandler):
             import macro_radar
             data = macro_radar.get_macro_sentiment(force=True)
             self._send_json(200, data)
+        elif self.path.startswith("/api/candles"):
+            import macro_radar
+            query = ""
+            if "?" in self.path:
+                query = self.path.split("?", 1)[1]
+            import urllib.parse
+            params = urllib.parse.parse_qs(query)
+            symbol = params.get("symbol", ["^NSEI"])[0]
+            range_param = params.get("range", ["2d"])[0]
+            interval = params.get("interval", ["5m"])[0]
+            candles = macro_radar.fetch_candles(symbol, interval, range_param)
+            self._send_json(200, {"symbol": symbol, "candles": candles})
         elif self.path == "/trades":
             trades = database.get_all_trades(50)
             self._send_json(200, {"trades": trades})
