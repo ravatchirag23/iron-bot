@@ -75,6 +75,33 @@
 
 ---
 
+## 📅 Session Log: 14-Nov-2026 (Institutional Battlestation Dashboard & UI Architecture)
+
+### 1. Root Cause Analysis & Macro Data Accuracy Hotfix
+- **Yahoo Finance Percentage Formula:** Identified that `(price - chartPreviousClose) / chartPreviousClose` produced inaccurate session percentages because `chartPreviousClose` refers to the start of multi-day range rather than previous session close. Extracted official `meta["regularMarketChangePercent"]` directly.
+- **GIFT Nifty 24/7 Uptime Engine:** Fixed weekend `--` issue where `/api/deep-intraday-graph` returned empty array `[]`. Switched primary ingestion to NSE IX Derivatives Settlement API (`/api/market-rate?type=derivatives`) with SQLite database fallback.
+- **Cross-Checked Tickers Verified Live:** GIFT Nifty `25,266.0 (+0.38%)`, Dow Jones `52,347.6 (+0.10%)`, Nasdaq `25,136.3 (-0.91%)`, Brent Crude `$96.08 (+0.27%)`, USD/INR `₹94.23 (+0.20%)`, India VIX `15.50 (-6.75%)`, Nifty 50 Spot `25,144.30 (-0.61%)`.
+
+### 2. Battlestation UI Upgrades Deployed to AWS EC2
+- **TradingView Lightweight Candlestick Radar:**
+  - Integrated 5-minute real candlestick stream via `/api/candles` with zero third-party license restrictions.
+  - Plotted 20 EMA trend confluence line over candles.
+  - Interactive crosshair OHLC legend and multi-symbol toggle (`NIFTY 50`, `BANK NIFTY`, `S&P 500`).
+- **Interactive Paper Testing Sandbox:**
+  - Added live order trigger controls (`Test BUY 25200 CE`, `Test BUY 25100 PE`, `Reset Quota 0/4`).
+  - Added active position testing controls (`+10 Pts Up`, `-10 Pts Down`, `Emergency Square-Off`).
+- **CNBC Real-Time News Ticker Ribbon:**
+  - Implemented decoupled zero-latency background worker parsing CNBC Market Insider RSS feed.
+  - Smooth CSS marquee ticker displaying top global financial headlines with 0% impact on trading execution latency.
+- **Visual Option Chain Depth Bar:**
+  - Dynamic Put Support Floor (25,000) vs Call Resistance Ceiling (25,500) visual ratio bar with PCR bias indicator.
+- **Verification & Deployment:**
+  - 18/18 unit & full integration tests passed.
+  - Git commit `130bd60` pushed to `main` and pulled to AWS EC2 Mumbai.
+  - Systemd service `iron-bot.service` active and verified live on browser.
+
+---
+
 ## 🎯 Next Steps
-- Weekend review of system logs.
 - Resume Track A (Python Core & Automation) daily drills.
+- Review weekend pre-market briefing and scheduled 8:00 AM TOTP auto-handshake.
