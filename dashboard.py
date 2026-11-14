@@ -213,7 +213,8 @@ def get_live_dashboard_state() -> Dict[str, Any]:
             "sentiment": oi_data.get("sentiment", "NEUTRAL")
         },
         "broker": angel_info,
-        "recent_trades": all_trades[:20]
+        "recent_trades": all_trades[:20],
+        "news": macro_radar.fetch_cnbc_news()
     }
 
 def render_dashboard_html() -> str:
@@ -227,6 +228,7 @@ def render_dashboard_html() -> str:
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
     <style>
         :root {
             --bg-base: #080c14;
@@ -651,6 +653,196 @@ def render_dashboard_html() -> str:
         .shield-info-title { font-size: 12px; font-weight: 700; color: #fff; }
         .shield-info-desc { font-size: 11px; color: var(--text-muted); }
 
+        /* TradingView Pro Chart Controls */
+        .chart-card-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 16px;
+            backdrop-filter: blur(16px);
+            margin-bottom: 20px;
+        }
+        .chart-btn-group {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .chart-sym-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-secondary);
+            font-family: var(--font-main);
+            font-size: 11px;
+            font-weight: 700;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .chart-sym-btn:hover {
+            background: rgba(56, 189, 248, 0.15);
+            color: var(--blue);
+            transform: translateY(-1px);
+        }
+        .chart-sym-btn.active {
+            background: rgba(56, 189, 248, 0.2);
+            border-color: var(--blue);
+            color: #fff;
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+        }
+
+        /* Interactive Test Sandbox Toolbar */
+        .sandbox-toolbar {
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px dashed rgba(56, 189, 248, 0.25);
+            border-radius: 10px;
+            padding: 14px;
+            max-width: 520px;
+            margin: 16px auto 0 auto;
+        }
+        .sandbox-btn {
+            font-family: var(--font-main);
+            font-size: 11px;
+            font-weight: 700;
+            padding: 8px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn-call {
+            background: rgba(16, 185, 129, 0.15);
+            border-color: rgba(16, 185, 129, 0.4);
+            color: var(--green);
+        }
+        .btn-call:hover {
+            background: rgba(16, 185, 129, 0.3);
+            box-shadow: 0 0 12px rgba(16, 185, 129, 0.3);
+            transform: translateY(-1px);
+        }
+        .btn-put {
+            background: rgba(239, 68, 68, 0.15);
+            border-color: rgba(239, 68, 68, 0.4);
+            color: var(--red);
+        }
+        .btn-put:hover {
+            background: rgba(239, 68, 68, 0.3);
+            box-shadow: 0 0 12px rgba(239, 68, 68, 0.3);
+            transform: translateY(-1px);
+        }
+        .btn-reset {
+            background: rgba(168, 85, 247, 0.15);
+            border-color: rgba(168, 85, 247, 0.4);
+            color: var(--purple);
+        }
+        .btn-reset:hover {
+            background: rgba(168, 85, 247, 0.3);
+            transform: translateY(-1px);
+        }
+        .btn-exit {
+            background: rgba(239, 68, 68, 0.25);
+            border-color: var(--red);
+            color: #fff;
+            font-weight: 800;
+        }
+        .btn-exit:hover {
+            background: var(--red);
+            box-shadow: 0 0 14px rgba(239, 68, 68, 0.5);
+            transform: translateY(-1px);
+        }
+        .btn-tick-up {
+            background: rgba(16, 185, 129, 0.12);
+            border-color: rgba(16, 185, 129, 0.3);
+            color: var(--green);
+        }
+        .btn-tick-up:hover { background: rgba(16, 185, 129, 0.25); }
+        .btn-tick-down {
+            background: rgba(239, 68, 68, 0.12);
+            border-color: rgba(239, 68, 68, 0.3);
+            color: var(--red);
+        }
+        .btn-tick-down:hover { background: rgba(239, 68, 68, 0.25); }
+
+        /* CNBC Real-Time Financial News Ticker Tape */
+        .news-ticker-container {
+            background: rgba(14, 21, 36, 0.85);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 8px 14px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 24px;
+            overflow: hidden;
+            backdrop-filter: blur(12px);
+        }
+        .news-ticker-badge {
+            background: rgba(239, 68, 68, 0.2);
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            color: var(--red);
+            font-size: 11px;
+            font-weight: 800;
+            padding: 4px 10px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+            letter-spacing: 0.5px;
+        }
+        .news-ticker-viewport {
+            flex: 1;
+            overflow: hidden;
+            white-space: nowrap;
+            position: relative;
+            mask-image: linear-gradient(to right, transparent, black 2%, black 98%, transparent);
+        }
+        .news-ticker-track {
+            display: inline-block;
+            padding-left: 100%;
+            animation: tickerScroll 55s linear infinite;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .news-ticker-track:hover {
+            animation-play-state: paused;
+        }
+        @keyframes tickerScroll {
+            0% { transform: translate3d(0, 0, 0); }
+            100% { transform: translate3d(-100%, 0, 0); }
+        }
+        .ticker-news-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-right: 28px;
+        }
+        .ticker-news-item a {
+            color: var(--text-primary);
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .ticker-news-item a:hover {
+            color: var(--blue);
+            text-decoration: underline;
+        }
+        .news-dot {
+            color: var(--cyan);
+            font-size: 9px;
+        }
+        .news-time {
+            color: var(--text-muted);
+            font-size: 11px;
+            font-family: var(--font-mono);
+        }
+
         /* Footer */
         footer {
             margin-top: 30px;
@@ -739,6 +931,27 @@ def render_dashboard_html() -> str:
 
     <!-- TAB 1: Cockpit & Active Position -->
     <div id="tab-cockpit" class="tab-content">
+
+        <!-- HERO: TradingView Live Interactive Candlestick Radar -->
+        <div class="card-box chart-card-box">
+            <div class="card-box-header" style="margin-bottom: 12px; padding-bottom: 10px;">
+                <div class="card-box-title">
+                    <span>📈 LIVE CANDLESTICK RADAR</span>
+                    <span class="live-dot" style="width: 6px; height: 6px;" title="Real-time TradingView Streaming Engine"></span>
+                    <span class="pill pill-green" style="font-size: 10px; padding: 2px 8px;">UT BOT 5M CONFLUENCE</span>
+                </div>
+                <div class="chart-btn-group">
+                    <button class="chart-sym-btn active" onclick="switchChartSymbol('NSE:NIFTY', this)">🇮🇳 NIFTY 50</button>
+                    <button class="chart-sym-btn" onclick="switchChartSymbol('NSE:BANKNIFTY', this)">🏦 BANK NIFTY</button>
+                    <button class="chart-sym-btn" onclick="switchChartSymbol('NSEIX:NIFTY', this)">🇸🇬 GIFT NIFTY</button>
+                    <button class="chart-sym-btn" onclick="switchChartSymbol('FOREXCOM:SPXUSD', this)">🇺🇸 S&P 500</button>
+                </div>
+            </div>
+            <div id="tv-chart-wrapper" style="height: 500px; width: 100%; border-radius: 10px; overflow: hidden; background: #080c14; border: 1px solid rgba(255,255,255,0.06);">
+                <div id="tv-chart-container" style="height: 100%; width: 100%;"></div>
+            </div>
+        </div>
+
         <div class="workspace-grid">
             
             <!-- Left Column: Active Trade & Math Engine -->
@@ -747,10 +960,18 @@ def render_dashboard_html() -> str:
                 <div id="active-position-container">
                     <div class="card-box idle-box">
                         <div class="radar-spinner"></div>
-                        <h4 style="color: var(--text-primary); margin-bottom: 6px;">NO ACTIVE TRADE POSITION</h4>
-                        <p style="font-size: 13px; max-width: 400px; margin: 0 auto;">
-                            Native UT Bot 5m scanner is monitoring the tape for confirmed crossover signals with 20 EMA trend confluence.
+                        <h4 style="color: var(--text-primary); margin-bottom: 6px;">SCANNER ARMED: AWAITING UT BOT CROSSOVER</h4>
+                        <p style="font-size: 13px; max-width: 440px; margin: 0 auto 16px auto; color: var(--text-secondary);">
+                            Monitoring live 5-minute candles for ATR trailing stop flip with 20 EMA trend confirmation.
                         </p>
+                        <div class="sandbox-toolbar">
+                            <span style="font-size: 11px; text-transform: uppercase; font-weight: 700; color: var(--text-muted); display: block; margin-bottom: 8px;">🎮 Interactive Test Sandbox (Paper Mode ₹0 Risk)</span>
+                            <div style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;">
+                                <button class="sandbox-btn btn-call" onclick="triggerSimulateOrder('BUY_CE', 25200, 200.0)">🚀 Test BUY 25200 CE</button>
+                                <button class="sandbox-btn btn-put" onclick="triggerSimulateOrder('BUY_PE', 25100, 195.0)">🛡️ Test BUY 25100 PE</button>
+                                <button class="sandbox-btn btn-reset" onclick="triggerResetLimits()">🔄 Reset Quota (0/4)</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -877,10 +1098,18 @@ def render_dashboard_html() -> str:
                             <small style="color: var(--text-muted); font-size: 11px;">Floor where institutions wrote heavy Puts</small>
                         </div>
 
-                        <div style="padding: 10px; background: rgba(0, 0, 0, 0.2); border-radius: 8px;">
-                            <div style="font-size: 11px; color: var(--text-muted); font-weight: 700;">OI SENTIMENT BIAS</div>
-                            <div style="font-size: 13px; font-weight: 700; color: #fff; margin-top: 4px;" id="oi-sentiment-display">
-                                NEUTRAL / BALANCED
+                        <div style="padding: 12px; background: rgba(0, 0, 0, 0.25); border-radius: 8px; border: 1px solid rgba(255,255,255,0.04);">
+                            <div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: 700; margin-bottom: 6px;">
+                                <span style="color: var(--green);">PUT SUPPORT FLOOR</span>
+                                <span style="color: var(--red);">CALL RESISTANCE CEILING</span>
+                            </div>
+                            <div style="height: 8px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; display: flex;">
+                                <div id="oi-put-bar" style="width: 52%; background: linear-gradient(90deg, #10b981, #059669); transition: width 0.5s;"></div>
+                                <div id="oi-call-bar" style="width: 48%; background: linear-gradient(90deg, #dc2626, #ef4444); transition: width 0.5s;"></div>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-top: 6px;">
+                                <span id="oi-sentiment-display" style="font-weight: 700; color: #fff;">NEUTRAL / BALANCED</span>
+                                <span class="mono" id="oi-pcr-ratio-text">PCR: 1.00</span>
                             </div>
                         </div>
                     </div>
@@ -1095,6 +1324,19 @@ def render_dashboard_html() -> str:
         </div>
     </div>
 
+    <!-- CNBC Real-Time Financial News Ticker Tape -->
+    <div class="news-ticker-container">
+        <div class="news-ticker-badge">
+            <span class="live-dot" style="width: 6px; height: 6px; background: var(--red); box-shadow: 0 0 6px var(--red);"></span>
+            <span>CNBC LIVE</span>
+        </div>
+        <div class="news-ticker-viewport">
+            <div class="news-ticker-track" id="news-ticker-track">
+                <span class="ticker-news-item">Streaming global financial intelligence & market sentiment...</span>
+            </div>
+        </div>
+    </div>
+
     <!-- Footer -->
     <footer>
         <div>IRON BOT Autonomous Options Trading System • Version 3.0 Institutional</div>
@@ -1104,6 +1346,11 @@ def render_dashboard_html() -> str:
     <!-- Interactive JS Auto-Sync Engine -->
     <script>
         let secondsSinceSync = 0;
+        let currentChartSymbol = 'NSE:NIFTY';
+        let tvWidgetInstance = null;
+        let lastTradeId = null;
+        let lastTradeActive = false;
+        let hasInitializedNews = false;
 
         function switchTab(tabId, btn) {
             document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
@@ -1112,6 +1359,134 @@ def render_dashboard_html() -> str:
             const target = document.getElementById('tab-' + tabId);
             if (target) target.style.display = 'block';
             if (btn) btn.classList.add('active');
+        }
+
+        // TradingView Dynamic Engine
+        function renderTradingViewChart(symbol = 'NSE:NIFTY') {
+            currentChartSymbol = symbol;
+            const container = document.getElementById('tv-chart-container');
+            if (!container) return;
+            container.innerHTML = '';
+
+            try {
+                if (typeof TradingView !== 'undefined' && TradingView.widget) {
+                    tvWidgetInstance = new TradingView.widget({
+                        "autosize": true,
+                        "symbol": symbol,
+                        "interval": "5",
+                        "timezone": "Asia/Kolkata",
+                        "theme": "dark",
+                        "style": "1",
+                        "locale": "en",
+                        "toolbar_bg": "#0e1524",
+                        "enable_publishing": false,
+                        "allow_symbol_change": true,
+                        "container_id": "tv-chart-container",
+                        "hide_side_toolbar": false,
+                        "withdateranges": true,
+                        "studies": [
+                            "MASimple@tv-basicstudies",
+                            "RSI@tv-basicstudies"
+                        ],
+                        "loading_screen": { "backgroundColor": "#080c14" }
+                    });
+                } else {
+                    container.innerHTML = `<iframe style="width: 100%; height: 100%; border: none;" src="https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(symbol)}&interval=5&theme=dark&style=1&timezone=Asia%2FKolkata&locale=en"></iframe>`;
+                }
+            } catch (err) {
+                console.warn('TradingView render fallback to iframe:', err);
+                container.innerHTML = `<iframe style="width: 100%; height: 100%; border: none;" src="https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(symbol)}&interval=5&theme=dark&style=1&timezone=Asia%2FKolkata&locale=en"></iframe>`;
+            }
+        }
+
+        function switchChartSymbol(sym, btn) {
+            document.querySelectorAll('.chart-sym-btn').forEach(b => b.classList.remove('active'));
+            if (btn) btn.classList.add('active');
+            renderTradingViewChart(sym);
+        }
+
+        // Interactive Sandbox Controls (₹0 Real Money at Risk)
+        async function triggerSimulateOrder(action, strike = 25200, price = 200.0) {
+            try {
+                const res = await fetch('/simulate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        signal: action,
+                        spot: 25150.0,
+                        entry_price: price,
+                        candle_low: price - 10.0,
+                        is_test: true
+                    })
+                });
+                const data = await res.json();
+                console.log('Simulate triggered:', data);
+                await syncLiveState();
+            } catch (e) {
+                alert('Simulation request error: ' + e);
+            }
+        }
+
+        async function triggerSquareOff() {
+            try {
+                const res = await fetch('/webhook', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ signal: 'EXIT' })
+                });
+                const data = await res.json();
+                console.log('Square off triggered:', data);
+                await syncLiveState();
+            } catch (e) {
+                alert('Exit error: ' + e);
+            }
+        }
+
+        async function triggerSimulateTick(deltaPts) {
+            try {
+                const pEl = document.getElementById('active-ltp');
+                let currentLtp = 200.0;
+                if (pEl) {
+                    currentLtp = parseFloat(pEl.innerText.replace(/[^0-9.]+/g, '')) || 200.0;
+                }
+                const newPrice = Math.max(1.0, currentLtp + deltaPts);
+                const res = await fetch('/tick', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ price: newPrice })
+                });
+                const data = await res.json();
+                console.log('Tick simulated:', data);
+                await syncLiveState();
+            } catch (e) {
+                alert('Tick simulate error: ' + e);
+            }
+        }
+
+        async function triggerResetLimits() {
+            try {
+                const res = await fetch('/reset', { method: 'POST' });
+                const data = await res.json();
+                alert('✅ Daily Tracker & Active Trades reset for fresh testing!');
+                await syncLiveState();
+            } catch (e) {
+                alert('Reset error: ' + e);
+            }
+        }
+
+        // CNBC News Ticker Marquee Generator
+        function updateNewsTicker(newsList) {
+            if (!newsList || newsList.length === 0) return;
+            const track = document.getElementById('news-ticker-track');
+            if (!track) return;
+            const itemsHtml = newsList.map(item => `
+                <span class="ticker-news-item">
+                    <span class="news-dot">●</span>
+                    <a href="${item.link || '#'}" target="_blank" rel="noopener noreferrer">${item.title}</a>
+                    <span class="news-time">${item.pubDate ? item.pubDate.split(' ').slice(0, 4).join(' ') : 'Live'}</span>
+                </span>
+            `).join(' &bull; ');
+            track.innerHTML = itemsHtml + ' &bull; ' + itemsHtml;
         }
 
         // Helper to update text with live green/red flash animation when price changes
@@ -1239,77 +1614,126 @@ def render_dashboard_html() -> str:
 
                 // 8. Active Trade Container
                 const activeContainer = document.getElementById('active-position-container');
-                if (data.active_trade) {
+                const isCurrentlyActive = Boolean(data.active_trade);
+                const currentId = data.active_trade ? data.active_trade.id : null;
+
+                if (isCurrentlyActive !== lastTradeActive || currentId !== lastTradeId) {
+                    lastTradeActive = isCurrentlyActive;
+                    lastTradeId = currentId;
+
+                    if (data.active_trade) {
+                        const at = data.active_trade;
+                        const pnlColor = at.pnl_rupees >= 0 ? 'var(--green)' : 'var(--red)';
+                        const pnlSign = at.pnl_rupees >= 0 ? '+' : '';
+                        
+                        activeContainer.innerHTML = `
+                            <div class="card-box active-trade-box">
+                                <div class="active-trade-header">
+                                    <div>
+                                        <span class="pill ${at.is_call ? 'pill-green' : 'pill-red'}" style="margin-bottom: 6px; display: inline-flex;">
+                                            ${at.side} • 1 LOT (${at.quantity} QTY)
+                                        </span>
+                                        <div class="strike-title">${at.symbol}</div>
+                                    </div>
+                                    <div style="text-align: right;">
+                                        <div style="font-size: 11px; color: var(--text-muted); font-weight: 700;">UNREALIZED P&L</div>
+                                        <div class="mono" id="active-pnl-rupees" style="font-size: 26px; font-weight: 800; color: ${pnlColor};">
+                                            ${pnlSign}₹${at.pnl_rupees.toFixed(2)}
+                                        </div>
+                                        <small class="mono" id="active-pnl-pts" style="color: ${pnlColor}; font-weight: 700;">${pnlSign}${at.pnl_points.toFixed(1)} pts</small>
+                                    </div>
+                                </div>
+
+                                <div class="ladder-grid">
+                                    <div>
+                                        <div class="ladder-item-label">ENTRY FILL</div>
+                                        <div class="ladder-item-val mono" id="active-entry">₹${at.entry_price.toFixed(2)}</div>
+                                    </div>
+                                    <div>
+                                        <div class="ladder-item-label">LIVE TICK (LTP)</div>
+                                        <div class="ladder-item-val mono" id="active-ltp" style="color: var(--blue);">₹${at.live_ltp.toFixed(2)}</div>
+                                    </div>
+                                    <div>
+                                        <div class="ladder-item-label">MICRO-SL</div>
+                                        <div class="ladder-item-val mono" id="active-sl" style="color: var(--red);">₹${at.sl_price.toFixed(2)}</div>
+                                    </div>
+                                    <div>
+                                        <div class="ladder-item-label">TARGET</div>
+                                        <div class="ladder-item-val mono" id="active-tp" style="color: var(--green);">₹${at.target_price.toFixed(2)}</div>
+                                    </div>
+                                </div>
+
+                                <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary); margin-top: 10px;">
+                                    <span>SL Distance: <b id="active-sl-dist">${at.sl_dist > 0 ? '+' : ''}${at.sl_dist.toFixed(1)} pts</b></span>
+                                    <span>Target Distance: <b id="active-tp-dist">${at.target_dist.toFixed(1)} pts</b></span>
+                                </div>
+
+                                <div class="progress-track">
+                                    <div class="progress-fill" id="active-progress-fill" style="width: ${at.rr_progress}%;"></div>
+                                </div>
+
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+                                    <div style="font-size: 11px; color: var(--text-muted);">
+                                        Milestone: <b id="active-milestone" style="color: var(--purple);">${at.milestone >= 1 ? 'Shield Locked (Cost Lock Active)' : 'Level 0 (Initial SL Active)'}</b>
+                                    </div>
+                                    <div style="font-size: 11px; color: var(--text-muted);">
+                                        Entered: <span class="mono">${at.timestamp}</span>
+                                    </div>
+                                </div>
+
+                                <!-- Action Buttons for Active Trade -->
+                                <div style="display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; flex-wrap: wrap; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 12px;">
+                                    <button class="sandbox-btn btn-tick-up" onclick="triggerSimulateTick(10.0)">📈 +10 Pts Up</button>
+                                    <button class="sandbox-btn btn-tick-down" onclick="triggerSimulateTick(-10.0)">📉 -10 Pts Down</button>
+                                    <button class="sandbox-btn btn-exit" onclick="triggerSquareOff()">🛑 Emergency Square-Off</button>
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        activeContainer.innerHTML = `
+                            <div class="card-box idle-box">
+                                <div class="radar-spinner"></div>
+                                <h4 style="color: var(--text-primary); margin-bottom: 6px;">SCANNER ARMED: AWAITING UT BOT CROSSOVER</h4>
+                                <p style="font-size: 13px; max-width: 440px; margin: 0 auto 16px auto; color: var(--text-secondary);">
+                                    Monitoring live 5-minute candles for ATR trailing stop flip with 20 EMA trend confirmation.
+                                </p>
+                                <div class="sandbox-toolbar">
+                                    <span style="font-size: 11px; text-transform: uppercase; font-weight: 700; color: var(--text-muted); display: block; margin-bottom: 8px;">🎮 Interactive Test Sandbox (Paper Mode ₹0 Risk)</span>
+                                    <div style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;">
+                                        <button class="sandbox-btn btn-call" onclick="triggerSimulateOrder('BUY_CE', 25200, 200.0)">🚀 Test BUY 25200 CE</button>
+                                        <button class="sandbox-btn btn-put" onclick="triggerSimulateOrder('BUY_PE', 25100, 195.0)">🛡️ Test BUY 25100 PE</button>
+                                        <button class="sandbox-btn btn-reset" onclick="triggerResetLimits()">🔄 Reset Quota (0/4)</button>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                } else if (data.active_trade) {
+                    // Update numbers without wiping DOM elements
                     const at = data.active_trade;
                     const pnlColor = at.pnl_rupees >= 0 ? 'var(--green)' : 'var(--red)';
                     const pnlSign = at.pnl_rupees >= 0 ? '+' : '';
                     
-                    activeContainer.innerHTML = `
-                        <div class="card-box active-trade-box">
-                            <div class="active-trade-header">
-                                <div>
-                                    <span class="pill ${at.is_call ? 'pill-green' : 'pill-red'}" style="margin-bottom: 6px; display: inline-flex;">
-                                        ${at.side} • 1 LOT (${at.quantity} QTY)
-                                    </span>
-                                    <div class="strike-title">${at.symbol}</div>
-                                </div>
-                                <div style="text-align: right;">
-                                    <div style="font-size: 11px; color: var(--text-muted); font-weight: 700;">UNREALIZED P&L</div>
-                                    <div class="mono" style="font-size: 26px; font-weight: 800; color: ${pnlColor};">
-                                        ${pnlSign}₹${at.pnl_rupees.toFixed(2)}
-                                    </div>
-                                    <small class="mono" style="color: ${pnlColor}; font-weight: 700;">${pnlSign}${at.pnl_points.toFixed(1)} pts</small>
-                                </div>
-                            </div>
-
-                            <div class="ladder-grid">
-                                <div>
-                                    <div class="ladder-item-label">ENTRY FILL</div>
-                                    <div class="ladder-item-val mono">₹${at.entry_price.toFixed(2)}</div>
-                                </div>
-                                <div>
-                                    <div class="ladder-item-label">LIVE TICK (LTP)</div>
-                                    <div class="ladder-item-val mono" style="color: var(--blue);">₹${at.live_ltp.toFixed(2)}</div>
-                                </div>
-                                <div>
-                                    <div class="ladder-item-label">MICRO-SL</div>
-                                    <div class="ladder-item-val mono" style="color: var(--red);">₹${at.sl_price.toFixed(2)}</div>
-                                </div>
-                                <div>
-                                    <div class="ladder-item-label">TARGET</div>
-                                    <div class="ladder-item-val mono" style="color: var(--green);">₹${at.target_price.toFixed(2)}</div>
-                                </div>
-                            </div>
-
-                            <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary); margin-top: 10px;">
-                                <span>SL Distance: <b>${at.sl_dist > 0 ? '+' : ''}${at.sl_dist.toFixed(1)} pts</b></span>
-                                <span>Target Distance: <b>${at.target_dist.toFixed(1)} pts</b></span>
-                            </div>
-
-                            <div class="progress-track">
-                                <div class="progress-fill" style="width: ${at.rr_progress}%;"></div>
-                            </div>
-
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
-                                <div style="font-size: 11px; color: var(--text-muted);">
-                                    Milestone: <b style="color: var(--purple);">${at.milestone >= 1 ? 'Shield Locked (Cost Lock Active)' : 'Level 0 (Initial SL Active)'}</b>
-                                </div>
-                                <div style="font-size: 11px; color: var(--text-muted);">
-                                    Entered: <span class="mono">${at.timestamp}</span>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                } else {
-                    activeContainer.innerHTML = `
-                        <div class="card-box idle-box">
-                            <div class="radar-spinner"></div>
-                            <h4 style="color: var(--text-primary); margin-bottom: 6px;">NO ACTIVE TRADE POSITION</h4>
-                            <p style="font-size: 13px; max-width: 420px; margin: 0 auto; color: var(--text-muted);">
-                                Native UT Bot 5m scanner is monitoring the tape for confirmed crossover signals with 20 EMA trend confluence.
-                            </p>
-                        </div>
-                    `;
+                    const pRupees = document.getElementById('active-pnl-rupees');
+                    if (pRupees) {
+                        pRupees.innerText = `${pnlSign}₹${at.pnl_rupees.toFixed(2)}`;
+                        pRupees.style.color = pnlColor;
+                    }
+                    const pPts = document.getElementById('active-pnl-pts');
+                    if (pPts) {
+                        pPts.innerText = `${pnlSign}${at.pnl_points.toFixed(1)} pts`;
+                        pPts.style.color = pnlColor;
+                    }
+                    const ltpEl = document.getElementById('active-ltp');
+                    if (ltpEl) ltpEl.innerText = `₹${at.live_ltp.toFixed(2)}`;
+                    const slEl = document.getElementById('active-sl');
+                    if (slEl) slEl.innerText = `₹${at.sl_price.toFixed(2)}`;
+                    const slDistEl = document.getElementById('active-sl-dist');
+                    if (slDistEl) slDistEl.innerText = `${at.sl_dist > 0 ? '+' : ''}${at.sl_dist.toFixed(1)} pts`;
+                    const tpDistEl = document.getElementById('active-tp-dist');
+                    if (tpDistEl) tpDistEl.innerText = `${at.target_dist.toFixed(1)} pts`;
+                    const progEl = document.getElementById('active-progress-fill');
+                    if (progEl) progEl.style.width = `${at.rr_progress}%`;
                 }
 
                 // 9. Greeks Breakdown Display
@@ -1330,6 +1754,16 @@ def render_dashboard_html() -> str:
                     document.getElementById('radar-pcr-val').innerText = data.option_chain.pcr;
                     document.getElementById('radar-call-wall').innerText = data.option_chain.call_wall;
                     document.getElementById('radar-put-wall').innerText = data.option_chain.put_wall;
+
+                    const pcr = parseFloat(data.option_chain.pcr) || 1.0;
+                    const putPct = Math.min(85, Math.max(15, (pcr / (pcr + 1.0)) * 100));
+                    const callPct = 100 - putPct;
+                    const putBar = document.getElementById('oi-put-bar');
+                    const callBar = document.getElementById('oi-call-bar');
+                    if (putBar) putBar.style.width = putPct.toFixed(1) + '%';
+                    if (callBar) callBar.style.width = callPct.toFixed(1) + '%';
+                    const pcrText = document.getElementById('oi-pcr-ratio-text');
+                    if (pcrText) pcrText.innerText = 'PCR: ' + pcr.toFixed(2);
                 }
 
                 // 11. Macro Radar All 7 Tickers with Live Flash Animation
@@ -1412,6 +1846,12 @@ def render_dashboard_html() -> str:
                 document.getElementById('ledger-pts-badge').innerText = 'Net: ' + (data.ledger_summary.total_points >= 0 ? '+' : '') + data.ledger_summary.total_points + ' pts';
                 document.getElementById('ledger-cash-badge').innerText = 'Cash: ' + (data.ledger_summary.total_cash >= 0 ? '+₹' : '-₹') + Math.abs(data.ledger_summary.total_cash).toFixed(2);
 
+                // 13. CNBC Real-Time Financial News Ticker Tape
+                if (data.news && data.news.length > 0 && !hasInitializedNews) {
+                    updateNewsTicker(data.news);
+                    hasInitializedNews = true;
+                }
+
             } catch (err) {
                 console.warn('Dashboard sync polling warning:', err);
             }
@@ -1427,7 +1867,10 @@ def render_dashboard_html() -> str:
         // Auto-poll every 2000 milliseconds for seamless zero-flicker experience
         setInterval(syncLiveState, 2000);
         // Initial sync on load
-        window.addEventListener('DOMContentLoaded', syncLiveState);
+        window.addEventListener('DOMContentLoaded', () => {
+            renderTradingViewChart('NSE:NIFTY');
+            syncLiveState();
+        });
     </script>
 </body>
 </html>
