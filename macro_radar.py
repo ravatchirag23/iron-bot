@@ -87,13 +87,35 @@ def fetch_candles(ticker: str = "^NSEI", interval: str = "5m", range_param: str 
     Cached for 20 seconds to provide zero-lag interactive chart exploration.
     """
     global _candles_cache, _candles_cache_time
-    cache_key = f"{ticker}_{interval}_{range_param}"
+    
+    # Universal symbol normalizer
+    symbol_map = {
+        "NSE:NIFTY": "^NSEI",
+        "NIFTY": "^NSEI",
+        "NIFTY50": "^NSEI",
+        "^NSEI": "^NSEI",
+        "NSE:BANKNIFTY": "^NSEBANK",
+        "BANKNIFTY": "^NSEBANK",
+        "^NSEBANK": "^NSEBANK",
+        "NSEIX:NIFTY": "^NSEI",
+        "GIFT NIFTY": "^NSEI",
+        "FOREXCOM:SPXUSD": "^GSPC",
+        "SPX": "^GSPC",
+        "^GSPC": "^GSPC",
+        "DOW": "^DJI",
+        "^DJI": "^DJI",
+        "NASDAQ": "^IXIC",
+        "^IXIC": "^IXIC"
+    }
+    resolved_ticker = symbol_map.get(ticker.upper(), ticker)
+
+    cache_key = f"{resolved_ticker}_{interval}_{range_param}"
     now = time.time()
     if cache_key in _candles_cache and (now - _candles_cache_time.get(cache_key, 0)) < 20.0:
         return _candles_cache[cache_key]
 
     try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={range_param}"
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{resolved_ticker}?interval={interval}&range={range_param}"
         req = urllib.request.Request(url, headers=HEADERS)
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))

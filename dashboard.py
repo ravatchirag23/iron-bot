@@ -1347,8 +1347,7 @@ def render_dashboard_html() -> str:
     <!-- Interactive JS Auto-Sync Engine -->
     <script>
         let secondsSinceSync = 0;
-        let currentChartSymbol = 'NSE:NIFTY';
-        let tvWidgetInstance = null;
+        let currentChartSymbol = '^NSEI';
         let lastTradeId = null;
         let lastTradeActive = false;
         let hasInitializedNews = false;
@@ -1452,6 +1451,10 @@ def render_dashboard_html() -> str:
 
         async function loadCandleData() {
             if (!candleSeries || !emaSeries) return;
+            const legend = document.getElementById('chart-legend-ohlc');
+            if (legend && (!candleSeries.data || candleSeries.data.length === 0)) {
+                legend.innerText = '⏳ Syncing 5m candles...';
+            }
             try {
                 const res = await fetch(`/api/candles?symbol=${encodeURIComponent(currentChartSymbol)}&interval=5m&range=2d`);
                 if (!res.ok) return;
@@ -1462,9 +1465,16 @@ def render_dashboard_html() -> str:
                     const emaData = calculateEMA(candles, 20);
                     emaSeries.setData(emaData);
                     chartInstance.timeScale().fitContent();
+                    if (legend) {
+                        const last = candles[candles.length - 1];
+                        legend.innerText = `LTP: ₹${last.close.toFixed(2)}  (5m UT-Bot + 20 EMA Active)`;
+                    }
+                } else if (legend) {
+                    legend.innerText = 'Offline/Weekend Tape';
                 }
             } catch (err) {
                 console.warn('Candle fetch error:', err);
+                if (legend) legend.innerText = '⚠️ Candle sync retry...';
             }
         }
 
