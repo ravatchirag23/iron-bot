@@ -65,6 +65,22 @@ def validate_signal_armor(signal_data: Dict[str, Any]) -> Tuple[bool, str]:
     if candle_range > config.MAX_CANDLE_RANGE_POINTS:
         return False, f"Exhaustion candle detected ({candle_range:.1f} pts > {config.MAX_CANDLE_RANGE_POINTS} pts max). Do not buy top!"
 
+    # 9. Capital & Wallet Margin Protection (Rule 15: ₹50K Wallet Cap)
+    wallet = database.get_wallet_stats()
+    if wallet.get("is_preservation_triggered", False):
+        database.lock_system_today(f"Capital preservation floor reached (₹{wallet['current_balance']:,.2f} <= ₹{wallet['preservation_floor']:,.2f})")
+        return False, f"Capital Preservation Circuit Breaker: Wallet balance (₹{wallet['current_balance']:,.2f}) hit floor (₹{wallet['preservation_floor']:,.2f}). Trading locked to protect capital!"
+
+    est_premium = float(signal_data.get("entry_price") or 220.0)
+    qty = int(signal_data.get("quantity") or config.DEFAULT_LOT_SIZE)
+    required_margin = round(est_premium * qty, 2)
+    if required_margin > wallet["available_margin"]:
+        return False, f"Insufficient Wallet Capital: Required margin ₹{required_margin:,.2f} > Available margin ₹{wallet['available_margin']:,.2f} in ₹50K Account!"
+
+    max_margin_allowed = wallet["current_balance"] * getattr(config, "MAX_MARGIN_PER_TRADE_PCT", 0.50)
+    if required_margin > max_margin_allowed:
+        return False, f"Position Sizing Cap: Required margin ₹{required_margin:,.2f} exceeds max 50% wallet allocation (₹{max_margin_allowed:,.2f})!"
+
     return True, "APPROVED"
 
 def calculate_dynamic_greek_brackets(entry_premium: float, delta: float = 0.50, spot_atr: float = 22.0) -> Tuple[float, float, str]:

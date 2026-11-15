@@ -213,6 +213,7 @@ def get_live_dashboard_state() -> Dict[str, Any]:
             "sentiment": oi_data.get("sentiment", "NEUTRAL")
         },
         "broker": angel_info,
+        "wallet": database.get_wallet_stats(),
         "recent_trades": all_trades[:20],
         "news": macro_radar.fetch_cnbc_news()
     }
@@ -900,6 +901,14 @@ def render_dashboard_html() -> str:
             </div>
         </div>
 
+        <div class="kpi-card" style="border-color: rgba(56, 189, 248, 0.25);">
+            <div class="kpi-label">30-DAY ₹50K WALLET <span id="wallet-day-badge" class="pill pill-blue" style="padding: 2px 6px; font-size: 10px;">DAY 1 / 30</span></div>
+            <div class="kpi-val mono" id="wallet-balance-display">₹50,000.00</div>
+            <div class="kpi-sub">
+                <span id="wallet-roi-sub" class="mono" style="color: var(--cyan); font-weight: 700;">ROI: +0.00% (+₹0.00)</span>
+            </div>
+        </div>
+
         <div class="kpi-card">
             <div class="kpi-label">NIFTY 50 SPOT <span id="atm-badge" class="pill pill-blue" style="padding: 2px 6px; font-size: 10px;">ATM 25050</span></div>
             <div class="kpi-val mono" id="nifty-spot-display">25,050.00</div>
@@ -971,7 +980,69 @@ def render_dashboard_html() -> str:
                                 <button class="sandbox-btn btn-call" onclick="triggerSimulateOrder('BUY_CE', 25200, 200.0)">🚀 Test BUY 25200 CE</button>
                                 <button class="sandbox-btn btn-put" onclick="triggerSimulateOrder('BUY_PE', 25100, 195.0)">🛡️ Test BUY 25100 PE</button>
                                 <button class="sandbox-btn btn-reset" onclick="triggerResetLimits()">🔄 Reset Quota (0/4)</button>
+                                <button class="sandbox-btn btn-reset" style="background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.35); color: var(--cyan);" onclick="triggerResetWallet()">💼 Reset ₹50K Wallet</button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 30-Day ₹50,000 Capital & ROI Campaign Engine -->
+                <div class="card-box" style="border: 1px solid rgba(56, 189, 248, 0.25); background: linear-gradient(180deg, rgba(14, 21, 36, 0.85) 0%, rgba(8, 12, 20, 0.95) 100%);">
+                    <div class="card-box-header">
+                        <div class="card-box-title">
+                            <span>💼 30-DAY ₹50,000 CAPITAL & ROI CAMPAIGN</span>
+                        </div>
+                        <div class="pill pill-blue mono" id="campaign-day-pill">DAY 1 OF 30 • 30 DAYS LEFT</div>
+                    </div>
+
+                    <!-- Visual Timeline Progress Bar -->
+                    <div style="margin: 12px 0 16px 0;">
+                        <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 6px;">
+                            <span style="color: var(--text-muted);">Campaign Window: <b id="campaign-dates-span" style="color: var(--text-secondary);">2026-11-15 → 30-Day Horizon</b></span>
+                            <span class="mono" id="campaign-progress-text" style="color: var(--cyan); font-weight: 700;">Day 1 / 30 (3.3%)</span>
+                        </div>
+                        <div style="height: 6px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden;">
+                            <div id="campaign-progress-bar" style="height: 100%; width: 3.3%; background: linear-gradient(90deg, var(--blue), var(--cyan)); transition: width 0.4s ease;"></div>
+                        </div>
+                    </div>
+
+                    <!-- 4-Box Capital Grid -->
+                    <div class="greeks-grid">
+                        <div class="greek-box" style="border-left: 3px solid var(--blue);">
+                            <div class="greek-label">INITIAL SEED FUND</div>
+                            <div class="greek-val mono" style="color: #fff;">₹50,000.00</div>
+                            <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">Fixed Seed Cap</div>
+                        </div>
+                        <div class="greek-box" style="border-left: 3px solid var(--cyan);">
+                            <div class="greek-label">LIVE ACCOUNT EQUITY</div>
+                            <div class="greek-val mono" id="campaign-cur-balance" style="color: var(--cyan);">₹50,000.00</div>
+                            <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;" id="campaign-equity-sub">₹50K + Net P&L</div>
+                        </div>
+                        <div class="greek-box" style="border-left: 3px solid var(--green);">
+                            <div class="greek-label">NET 30-DAY ROI</div>
+                            <div class="greek-val mono" id="campaign-roi-pct" style="color: var(--green);">+0.00%</div>
+                            <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;" id="campaign-net-pnl-sub">+₹0.00 Net Gain</div>
+                        </div>
+                        <div class="greek-box" style="border-left: 3px solid var(--purple);">
+                            <div class="greek-label">AVAILABLE MARGIN</div>
+                            <div class="greek-val mono" id="campaign-avail-margin" style="color: #a78bfa;">₹50,000.00</div>
+                            <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;" id="campaign-margin-used-sub">Locked: ₹0.00</div>
+                        </div>
+                    </div>
+
+                    <!-- Institutional Target & Preservation Circuit Breaker -->
+                    <div style="margin-top: 14px; padding: 10px 14px; background: rgba(0,0,0,0.25); border-radius: 8px; border: 1px solid rgba(255,255,255,0.04); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 11px;">
+                        <div>
+                            <span style="color: var(--text-muted);">🎯 Target:</span>
+                            <span class="mono" style="color: var(--green); font-weight: 700; margin-left: 4px;">+20% (+₹10,000 | ₹60K Target)</span>
+                        </div>
+                        <div>
+                            <span style="color: var(--text-muted);">🛡️ Preservation Floor:</span>
+                            <span class="mono" style="color: var(--red); font-weight: 700; margin-left: 4px;">₹35,000.00 (Max -30% DD)</span>
+                        </div>
+                        <div>
+                            <span style="color: var(--text-muted);">🔒 Per-Trade Cap:</span>
+                            <span class="mono" style="color: var(--yellow); font-weight: 700; margin-left: 4px;">50% Margin (₹25,000)</span>
                         </div>
                     </div>
                 </div>
@@ -1554,6 +1625,18 @@ def render_dashboard_html() -> str:
             }
         }
 
+        async function triggerResetWallet() {
+            if (!confirm('Start fresh 30-Day Campaign with strict ₹50,000 INR wallet cap starting today?')) return;
+            try {
+                const res = await fetch('/reset_wallet', { method: 'POST' });
+                const data = await res.json();
+                alert('💼 ' + (data.message || '30-Day Campaign initialized with ₹50,000 INR cap!'));
+                await syncLiveState();
+            } catch (e) {
+                alert('Wallet reset error: ' + e);
+            }
+        }
+
         // CNBC News Ticker Marquee Generator
         function updateNewsTicker(newsList) {
             if (!newsList || newsList.length === 0) return;
@@ -1675,6 +1758,56 @@ def render_dashboard_html() -> str:
                 document.getElementById('lock-state-desc').innerText = 
                     data.today_stats.is_locked ? data.today_stats.lock_reason : `Quota Remaining: ${quotaRemaining} Trades`;
 
+                // 4.1. 30-Day ₹50K Wallet & ROI Campaign Engine
+                if (data.wallet) {
+                    const w = data.wallet;
+                    const balEl = document.getElementById('wallet-balance-display');
+                    if (balEl) balEl.innerText = '₹' + w.current_balance.toLocaleString('en-IN', {minimumFractionDigits: 2});
+                    
+                    const roiColor = w.roi_pct >= 0 ? 'var(--green)' : 'var(--red)';
+                    const roiSign = w.roi_pct >= 0 ? '+' : '';
+                    const pnlSign = w.realized_pnl >= 0 ? '+' : '';
+                    
+                    const roiSubEl = document.getElementById('wallet-roi-sub');
+                    if (roiSubEl) {
+                        roiSubEl.innerText = `ROI: ${roiSign}${w.roi_pct.toFixed(2)}% (${pnlSign}₹${w.realized_pnl.toFixed(2)})`;
+                        roiSubEl.style.color = roiColor;
+                    }
+                    
+                    const dayBadge = document.getElementById('wallet-day-badge');
+                    if (dayBadge) dayBadge.innerText = `DAY ${w.day_number} / ${w.total_days}`;
+                    
+                    const campDayPill = document.getElementById('campaign-day-pill');
+                    if (campDayPill) campDayPill.innerText = `DAY ${w.day_number} OF ${w.total_days} • ${w.days_remaining} DAYS LEFT`;
+                    
+                    const campDates = document.getElementById('campaign-dates-span');
+                    if (campDates) campDates.innerText = `${w.start_date} → 30-Day Horizon`;
+                    
+                    const campProgText = document.getElementById('campaign-progress-text');
+                    if (campProgText) campProgText.innerText = `Day ${w.day_number} / ${w.total_days} (${w.timeline_pct}%)`;
+                    
+                    const campProgBar = document.getElementById('campaign-progress-bar');
+                    if (campProgBar) campProgBar.style.width = `${w.timeline_pct}%`;
+                    
+                    const curBalEl = document.getElementById('campaign-cur-balance');
+                    if (curBalEl) curBalEl.innerText = '₹' + w.current_balance.toLocaleString('en-IN', {minimumFractionDigits: 2});
+                    
+                    const roiPctEl = document.getElementById('campaign-roi-pct');
+                    if (roiPctEl) {
+                        roiPctEl.innerText = `${roiSign}${w.roi_pct.toFixed(2)}%`;
+                        roiPctEl.style.color = roiColor;
+                    }
+                    
+                    const netPnlSub = document.getElementById('campaign-net-pnl-sub');
+                    if (netPnlSub) netPnlSub.innerText = `${pnlSign}₹${w.realized_pnl.toFixed(2)} Net Gain`;
+                    
+                    const availEl = document.getElementById('campaign-avail-margin');
+                    if (availEl) availEl.innerText = '₹' + w.available_margin.toLocaleString('en-IN', {minimumFractionDigits: 2});
+                    
+                    const marginSub = document.getElementById('campaign-margin-used-sub');
+                    if (marginSub) marginSub.innerText = `Locked: ₹${w.margin_used.toFixed(2)}`;
+                }
+
                 // 5. Nifty Spot & ATM
                 const spot = data.option_chain.spot || 25050.0;
                 document.getElementById('nifty-spot-display').innerText = spot.toLocaleString('en-IN', {minimumFractionDigits: 2});
@@ -1783,6 +1916,7 @@ def render_dashboard_html() -> str:
                                         <button class="sandbox-btn btn-call" onclick="triggerSimulateOrder('BUY_CE', 25200, 200.0)">🚀 Test BUY 25200 CE</button>
                                         <button class="sandbox-btn btn-put" onclick="triggerSimulateOrder('BUY_PE', 25100, 195.0)">🛡️ Test BUY 25100 PE</button>
                                         <button class="sandbox-btn btn-reset" onclick="triggerResetLimits()">🔄 Reset Quota (0/4)</button>
+                                        <button class="sandbox-btn btn-reset" style="background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.35); color: var(--cyan);" onclick="triggerResetWallet()">💼 Reset ₹50K Wallet</button>
                                     </div>
                                 </div>
                             </div>

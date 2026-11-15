@@ -257,5 +257,134 @@ def reset_daily_limits(today_str: Optional[str] = None):
     conn.commit()
     conn.close()
 
+def get_wallet_stats() -> Dict[str, Any]:
+    """
+    Computes strict ₹50,000 INR Wallet & 30-Day Campaign Performance Metrics.
+    Tracks starting seed capital, current equity, available margin, ROI %, and circuit breakers.
+    """
+    start_date_str = get_config("campaign_start_date", getattr(config, "CAMPAIGN_START_DATE", "2026-11-15"))
+    initial_capital = float(get_config("initial_wallet_capital", str(getattr(config, "INITIAL_WALLET_CAPITAL", 50000.0))))
+    duration_days = int(getattr(config, "CAMPAIGN_DURATION_DAYS", 30))
+    target_roi_pct = float(getattr(config, "TARGET_ROI_PCT", 20.0))
+    preservation_floor = float(getattr(config, "CAPITAL_PRESERVATION_FLOOR", 35000.0))
+    
+    # Calculate Day N of 30
+    try:
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+    except Exception:
+        start_date = config.get_now_ist().date()
+        start_date_str = start_date.strftime("%Y-%m-%d")
+
+    today_date = config.get_now_ist().date()
+    days_elapsed = (today_date - start_date).days + 1
+    day_number = max(1, min(days_elapsed, duration_days))
+    days_remaining = max(0, duration_days - day_number + 1)
+    
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # 1. Closed trades within current campaign window (trade_date >= start_date)
+    # Exclude dummy test dates (e.g. 2026-11-96/97/98 from unit tests)
+    cursor.execute("""
+        SELECT 
+            COUNT(*),
+            COALESCE(SUM(pnl_rupees), 0.0),
+            COALESCE(SUM(pnl_points), 0.0),
+            COALESCE(MAX(pnl_rupees), 0.0),
+            COALESCE(MIN(pnl_rupees), 0.0)
+        FROM trades 
+        WHERE status = 'CLOSED' 
+          AND trade_date >= ?
+          AND trade_date NOT LIKE '%-9_'
+    """, (start_date_str,))
+    agg = cursor.fetchone()
+    
+    trade_count = agg[0] or 0
+    realized_pnl = round(float(agg[1]), 2)
+    realized_points = round(float(agg[2]), 1)
+    best_trade = round(float(agg[3]), 2)
+    worst_trade = round(float(agg[4]), 2)
+    
+    # 2. Win / Loss stats for campaign
+    cursor.execute("""
+        SELECT 
+            COUNT(CASE WHEN pnl_rupees > 0 THEN 1 END),
+            COUNT(CASE WHEN pnl_rupees < 0 THEN 1 END)
+        FROM trades 
+        WHERE status = 'CLOSED' 
+          AND trade_date >= ?
+          AND trade_date NOT LIKE '%-9_'
+    """, (start_date_str,))
+    w_row = cursor.fetchone()
+    wins = w_row[0] or 0
+    losses = w_row[1] or 0
+    win_rate = round((wins / trade_count * 100.0), 1) if trade_count > 0 else 0.0
+    
+    # 3. Active trade margin lock
+    cursor.execute("SELECT * FROM trades WHERE status = 'ACTIVE' ORDER BY id DESC LIMIT 1")
+    active = cursor.fetchone()
+    margin_used = 0.0
+    active_trade_info = None
+    if active:
+        active_trade_info = dict(active)
+        entry_px = float(active_trade_info.get("entry_price", 0.0))
+        q = int(active_trade_info.get("quantity", config.DEFAULT_LOT_SIZE))
+        margin_used = round(entry_px * q, 2)
+        
+    conn.close()
+    
+    current_balance = round(initial_capital + realized_pnl, 2)
+    available_margin = max(0.0, round(current_balance - margin_used, 2))
+    roi_pct = round((realized_pnl / initial_capital) * 100.0, 2)
+    
+    target_profit = round(initial_capital * (target_roi_pct / 100.0), 2)
+    target_balance = round(initial_capital + target_profit, 2)
+    progress_to_target = 0.0
+    if target_profit > 0 and realized_pnl > 0:
+        progress_to_target = min(100.0, round((realized_pnl / target_profit) * 100.0, 1))
+
+    is_preservation_triggered = current_balance <= preservation_floor
+    max_safe_drawdown = round(current_balance - preservation_floor, 2)
+    
+    # Timeline percentage (e.g. Day 1 of 30 = 3.3%)
+    timeline_pct = min(100, max(0, int((day_number / duration_days) * 100)))
+
+    return {
+        "campaign_name": "30-Day ₹50K Alpha Campaign",
+        "start_date": start_date_str,
+        "day_number": day_number,
+        "total_days": duration_days,
+        "days_remaining": days_remaining,
+        "timeline_pct": timeline_pct,
+        "initial_capital": initial_capital,
+        "current_balance": current_balance,
+        "realized_pnl": realized_pnl,
+        "realized_points": realized_points,
+        "roi_pct": roi_pct,
+        "margin_used": margin_used,
+        "available_margin": available_margin,
+        "trade_count": trade_count,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": win_rate,
+        "best_trade": best_trade,
+        "worst_trade": worst_trade,
+        "target_roi_pct": target_roi_pct,
+        "target_profit": target_profit,
+        "target_balance": target_balance,
+        "progress_to_target": progress_to_target,
+        "preservation_floor": preservation_floor,
+        "max_safe_drawdown": max_safe_drawdown,
+        "is_preservation_triggered": is_preservation_triggered
+    }
+
+def init_campaign_wallet(initial_capital: float = 50000.0, start_date: Optional[str] = None):
+    """Initializes or resets the 30-Day ₹50,000 Campaign starting ledger."""
+    if not start_date:
+        start_date = config.get_today_ist()
+    set_config("initial_wallet_capital", str(float(initial_capital)))
+    set_config("campaign_start_date", start_date)
+    log_event("CAMPAIGN_INITIALIZED", f"30-Day Campaign started on {start_date} with ₹{initial_capital:,.2f} wallet cap")
+
 # Initialize tables when module is imported
 init_db()

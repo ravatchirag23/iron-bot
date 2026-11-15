@@ -122,6 +122,8 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self.handle_tick(payload)
         elif self.path == "/reset":
             self.handle_reset()
+        elif self.path == "/reset_wallet":
+            self.handle_reset_wallet()
         elif self.path == "/update_token":
             self.handle_update_token_post(post_data)
         else:
@@ -263,6 +265,18 @@ class WebhookHandler(BaseHTTPRequestHandler):
         conn.close()
         paper_engine.engine.sync_state()
         self._send_json(200, {"status": "RESET_SUCCESSFUL", "message": "Daily limits & active trades cleared for testing"})
+
+    def handle_reset_wallet(self):
+        """Initializes or resets the 30-Day ₹50K campaign starting today."""
+        today_str = config.get_today_ist()
+        database.init_campaign_wallet(initial_capital=config.INITIAL_WALLET_CAPITAL, start_date=today_str)
+        database.reset_daily_limits(today_str)
+        paper_engine.engine.sync_state()
+        logger.info(f"30-Day Campaign initialized with ₹{config.INITIAL_WALLET_CAPITAL:,.2f} INR wallet cap on {today_str}")
+        self._send_json(200, {
+            "status": "WALLET_RESET_SUCCESSFUL",
+            "message": f"30-Day Campaign initialized with strict ₹{config.INITIAL_WALLET_CAPITAL:,.2f} INR wallet cap starting {today_str}!"
+        })
 
     def handle_status(self):
         try:

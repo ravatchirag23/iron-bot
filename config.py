@@ -25,11 +25,19 @@ def get_now_str_ist() -> str:
     return get_now_ist().strftime("%Y-%m-%d %H:%M:%S")
 
 # =====================================================================
-# 1. CORE OPERATIONAL MODES
+# 1. CORE OPERATIONAL MODES & CAPITAL WALLET
 # =====================================================================
 PAPER_TRADING_MODE = True       # 100% Virtual Ledger (₹0 Real Money at Risk)
 PORT = int(os.environ.get("PORT", 5001)) # Webhook Server Port (Render passes PORT env)
 HOST = "0.0.0.0"
+
+# 30-Day Campaign & ₹50K Capital Cap (Strict No-Infinite-Money Rule)
+INITIAL_WALLET_CAPITAL = 50000.0         # Strict ₹50,000 INR Starting Seed Fund
+CAMPAIGN_START_DATE = "2026-11-15"        # 30-Day Horizon Start Date
+CAMPAIGN_DURATION_DAYS = 30               # 30-Day Evaluation Campaign Window
+MAX_MARGIN_PER_TRADE_PCT = 0.50           # Max 50% wallet margin allocation per trade (₹25,000)
+CAPITAL_PRESERVATION_FLOOR = 35000.0      # Circuit breaker: Hard stop if balance drops below ₹35,000 (-30% drawdown)
+TARGET_ROI_PCT = 20.0                     # Institutional Target: +20.0% Net ROI (+₹10,000) in 30 days
 
 # =====================================================================
 # 2. THE 13 IRON ARMOR RULES (DISCIPLINE LOCKS)
