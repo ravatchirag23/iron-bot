@@ -102,6 +102,31 @@
 
 ---
 
+## 📅 Session Log: 15-Nov-2026 (Strict ₹50,000 INR Wallet Cap & 30-Day ROI Campaign)
+
+### 1. Capital Protection & Campaign Architecture
+- **Elimination of Infinite Paper Money:** Set a strict initial seed capital cap of **₹50,000.00 INR** in `config.py` (`INITIAL_WALLET_CAPITAL = 50000.0`).
+- **30-Day Evaluation Horizon:** Configured formal 30-calendar-day campaign window starting today (`CAMPAIGN_START_DATE = "2026-11-15"`).
+- **Rule 15: Capital & Margin Protection (`risk_manager.py`):**
+  - **Required Margin Check:** Every trade estimates option margin ($P_{\text{entry}} \times Q$). If required margin exceeds available wallet balance, entry is rejected.
+  - **Position Sizing Ceiling:** Max 50% of current equity per trade (₹25,000 max single-order risk).
+  - **Capital Preservation Floor:** Circuit breaker hard-stops all trading if wallet equity falls to ₹35,000 (-30% max campaign drawdown / 15R buffer).
+- **Persistent Campaign Statistics (`database.py`):**
+  - Added `get_wallet_stats()` computing starting balance, live equity, available/locked margin, net ROI %, best/worst trades, timeline progress, and countdown to Day 30.
+  - Added `init_campaign_wallet()` allowing clean initialization/reset of the 30-day ledger.
+- **Top Bar & Cockpit Terminal UI (`dashboard.py`):**
+  - Added dedicated **30-DAY ₹50K WALLET** KPI card in top header bar showing live equity (`₹50,000.00`), ROI % badge, and day counter (`DAY 1 / 30`).
+  - Added full-width **30-DAY ₹50,000 CAPITAL & ROI CAMPAIGN** cockpit block featuring visual gradient timeline bar, 4-box metrics (Seed Fund, Live Equity, Net ROI %, Available Margin), target ROI indicators (+20% / ₹60,000 target), and circuit breaker status.
+  - Added `[ 💼 Reset ₹50K Wallet ]` interactive sandbox button.
+
+### 2. Verification & AWS EC2 Deployment
+- **Unit Testing:** Authored `tests/test_wallet_campaign.py` verifying margin rejections, position sizing caps, trade lifecycle ROI updates, and fresh baselines (5/5 tests passing).
+- **Full Suite Regression:** 23/23 tests passed cleanly across the entire system.
+- **Git Commits:** `fd51022` and `50e7ec6` pushed to GitHub `main`.
+- **AWS EC2 Mumbai (`13.207.161.15`):** Pulled and restarted `iron-bot.service`. Verified live via Chrome DevTools MCP with live screenshot showing clean ₹50,000.00 wallet baseline.
+
+---
+
 ## 🎯 Next Steps
+- Monitor live 30-day campaign progress on EC2 (`http://13.207.161.15:5001/status`).
 - Resume Track A (Python Core & Automation) daily drills.
-- Review weekend pre-market briefing and scheduled 8:00 AM TOTP auto-handshake.
