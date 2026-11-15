@@ -269,8 +269,13 @@ class WebhookHandler(BaseHTTPRequestHandler):
     def handle_reset_wallet(self):
         """Initializes or resets the 30-Day ₹50K campaign starting today."""
         today_str = config.get_today_ist()
+        conn = database.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM trades WHERE trade_date = ?", (today_str,))
+        cursor.execute("DELETE FROM daily_tracker WHERE trade_date = ?", (today_str,))
+        conn.commit()
+        conn.close()
         database.init_campaign_wallet(initial_capital=config.INITIAL_WALLET_CAPITAL, start_date=today_str)
-        database.reset_daily_limits(today_str)
         paper_engine.engine.sync_state()
         logger.info(f"30-Day Campaign initialized with ₹{config.INITIAL_WALLET_CAPITAL:,.2f} INR wallet cap on {today_str}")
         self._send_json(200, {
