@@ -15,23 +15,25 @@ import database
 import risk_manager
 
 class TestWalletCampaign(unittest.TestCase):
+    TEST_START_DATE = "2099-01-01"
+
     def setUp(self):
         database.init_db()
         conn = database.get_connection()
-        conn.cursor().execute("DELETE FROM trades WHERE symbol LIKE '%WALLET%' OR symbol = 'NIFTY25200CE'")
-        conn.cursor().execute("DELETE FROM daily_tracker WHERE trade_date = '2026-11-15'")
+        conn.cursor().execute("DELETE FROM trades WHERE symbol LIKE '%WALLET%' OR symbol = 'NIFTY25200CE' OR trade_date >= '2099-01-01'")
+        conn.cursor().execute(f"DELETE FROM daily_tracker WHERE trade_date = '{self.TEST_START_DATE}'")
         conn.commit()
         conn.close()
-        # Initialize campaign with 50,000 cap on test date
-        database.init_campaign_wallet(initial_capital=50000.0, start_date="2026-11-15")
+        # Initialize campaign with 50,000 cap on isolated test date
+        database.init_campaign_wallet(initial_capital=50000.0, start_date=self.TEST_START_DATE)
 
     def tearDown(self):
         conn = database.get_connection()
-        conn.cursor().execute("DELETE FROM trades WHERE symbol LIKE '%WALLET%' OR symbol = 'NIFTY25200CE'")
-        conn.cursor().execute("DELETE FROM daily_tracker WHERE trade_date = '2026-11-15'")
+        conn.cursor().execute("DELETE FROM trades WHERE symbol LIKE '%WALLET%' OR symbol = 'NIFTY25200CE' OR trade_date >= '2099-01-01'")
+        conn.cursor().execute(f"DELETE FROM daily_tracker WHERE trade_date = '{self.TEST_START_DATE}'")
         conn.commit()
         conn.close()
-        # Ensure fresh baseline
+        # Restore actual campaign start date
         database.init_campaign_wallet(initial_capital=50000.0, start_date="2026-11-15")
 
     def test_initial_wallet_baseline(self):
@@ -100,6 +102,12 @@ class TestWalletCampaign(unittest.TestCase):
             "quantity": 65,
             "is_runner": 0
         })
+        
+        # Set trade_date to isolated test campaign date
+        conn = database.get_connection()
+        conn.cursor().execute("UPDATE trades SET trade_date = ? WHERE id = ?", (self.TEST_START_DATE, trade_id))
+        conn.commit()
+        conn.close()
         
         # Verify margin is locked while active
         w_active = database.get_wallet_stats()
