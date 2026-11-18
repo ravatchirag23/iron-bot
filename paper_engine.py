@@ -13,12 +13,26 @@ class PaperTradingEngine:
     def __init__(self):
         self.active_trade = database.get_active_trade()
         self.milestone_reached = 0
+        self.initial_sl_dist = 0.0
+        if self.active_trade:
+            entry = float(self.active_trade.get("entry_price", 0.0))
+            base_sl = float(self.active_trade.get("initial_sl_price") or self.active_trade.get("sl_price", 0.0))
+            self.initial_sl_dist = max(5.0, abs(entry - base_sl))
 
     def sync_state(self):
         self.active_trade = database.get_active_trade()
+        if self.active_trade and self.initial_sl_dist <= 0.0:
+            entry = float(self.active_trade.get("entry_price", 0.0))
+            base_sl = float(self.active_trade.get("initial_sl_price") or self.active_trade.get("sl_price", 0.0))
+            self.initial_sl_dist = max(5.0, abs(entry - base_sl))
 
     def process_entry(self, trade_params: Dict[str, Any], oi_advisory: str = "") -> int:
         """Executes a virtual trade entry and sends Telegram notification."""
+        entry_px = float(trade_params["entry_price"])
+        init_sl = float(trade_params["sl_price"])
+        trade_params["initial_sl_price"] = init_sl
+        self.initial_sl_dist = max(5.0, abs(entry_px - init_sl))
+        
         trade_id = database.record_trade_entry(trade_params)
         self.active_trade = database.get_active_trade()
         self.milestone_reached = 0
@@ -88,6 +102,8 @@ class PaperTradingEngine:
             database.lock_system_today("15:15 PM Auto-Square-Off reached. Position closed safely!")
             telegram_notifier.notify_exit(symbol, bid_exit, "15:15_PM_AUTO_SQUARE_OFF", pnl_pts, pnl_rupees)
             self.active_trade = None
+            self.initial_sl_dist = 0.0
+            self.milestone_reached = 0
             return {"status": "CLOSED", "reason": "15:15_PM_AUTO_SQUARE_OFF", "pnl_rupees": pnl_rupees}
 
         # B. 45-Minute Stagnation Rule (Gap #2: Theta Decay Protection)
@@ -102,6 +118,8 @@ class PaperTradingEngine:
                 self._check_and_lock_daily_limits("45MIN_THETA_STAGNATION_EXIT")
                 telegram_notifier.notify_exit(symbol, bid_exit, "45MIN_THETA_STAGNATION_EXIT", pnl_pts, pnl_rupees)
                 self.active_trade = None
+                self.initial_sl_dist = 0.0
+                self.milestone_reached = 0
                 return {"status": "CLOSED", "reason": "45MIN_THETA_STAGNATION_EXIT", "pnl_rupees": pnl_rupees}
         except Exception:
             pass
@@ -118,11 +136,14 @@ class PaperTradingEngine:
             self._check_and_lock_daily_limits("TARGET_HIT")
             telegram_notifier.notify_exit(symbol, bid_exit, "TARGET_HIT", pnl_pts, pnl_rupees)
             self.active_trade = None
+            self.initial_sl_dist = 0.0
+            self.milestone_reached = 0
             return {"status": "CLOSED", "reason": "TARGET_HIT", "pnl_rupees": pnl_rupees}
 
-        # 2. Stop-Loss Hit (Selling at Bid - Spread Friction)
+        # 2. Stop-Loss Hit (Realistic Gap-Through Fill: use WORSE of actual price vs SL)
         if current_price <= sl:
-            bid_exit = round(sl - config.BID_ASK_FRICTION_POINTS, 2)
+            actual_exit = min(current_price, sl)  # In gap-through, price is below SL
+            bid_exit = round(actual_exit - config.BID_ASK_FRICTION_POINTS, 2)
             pnl_pts = round(bid_exit - entry, 2)
             pnl_rupees = round(pnl_pts * qty, 2)
             if sl > entry:
@@ -133,10 +154,14 @@ class PaperTradingEngine:
             self._check_and_lock_daily_limits(reason)
             telegram_notifier.notify_exit(symbol, bid_exit, reason, pnl_pts, pnl_rupees)
             self.active_trade = None
+            self.initial_sl_dist = 0.0
+            self.milestone_reached = 0
             return {"status": "CLOSED", "reason": reason, "pnl_rupees": pnl_rupees}
 
         # 3. Tiered Milestone Trailing Protection (Rule 9 & Dynamic Greeks Model)
-        initial_sl_dist = max(5.0, abs(entry - float(sl)))
+        # Use initial_sl_dist or initial_sl_price so trailing updates do not distort milestone thresholds
+        base_sl = float(trade.get("initial_sl_price") or trade.get("sl_price", sl))
+        initial_sl_dist = self.initial_sl_dist if self.initial_sl_dist > 0 else max(5.0, abs(entry - base_sl))
         m1_trigger = round(initial_sl_dist * 1.0, 1)  # 1:1 RR Cost Lock (e.g. +14 pts on ATM, +7.6 pts on OTM)
         m2_trigger = round(initial_sl_dist * 1.5, 1)  # 1:1.5 RR Profit Lock
         m3_trigger = round(initial_sl_dist * 2.2, 1)  # 1:2.2 RR Big Breakout Lock
@@ -205,6 +230,8 @@ class PaperTradingEngine:
         self._check_and_lock_daily_limits(reason)
         telegram_notifier.notify_exit(trade["symbol"], exit_price, reason, pnl_pts, pnl_rupees)
         self.active_trade = None
+        self.initial_sl_dist = 0.0
+        self.milestone_reached = 0
         return {"status": "CLOSED", "reason": reason, "pnl_rupees": pnl_rupees}
 
 # Global singleton engine

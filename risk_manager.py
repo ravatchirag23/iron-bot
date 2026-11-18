@@ -5,8 +5,11 @@ Validates every incoming webhook before any order can be processed.
 
 from datetime import datetime, time
 from typing import Tuple, Dict, Any, Optional
+import logging
 import config
 import database
+
+logger = logging.getLogger("IronBot.RiskManager")
 
 def get_atm_strike(spot_price: float, is_call: bool) -> int:
     """Rounds Nifty spot to nearest 50-strike ATM."""
@@ -237,6 +240,16 @@ def calculate_trade_parameters(signal_data: Dict[str, Any]) -> Dict[str, Any]:
     # Micro-SL and Target
     sl_price = round(ask_fill - sl_points, 2)
     target_price = round(ask_fill + target_points, 2)
+    
+    # Sanity Guardrail: SL must ALWAYS be below entry for BUY positions
+    if sl_price >= ask_fill:
+        logger.warning(f"⚠️ Inverted SL detected! sl={sl_price} >= entry={ask_fill}. sl_points={sl_points}. Forcing fallback SL.")
+        sl_price = round(ask_fill - config.DEFAULT_MICRO_SL_POINTS, 2)
+        target_price = round(ask_fill + config.DEFAULT_TARGET_POINTS, 2)
+        
+    if target_price <= ask_fill:
+        logger.warning(f"⚠️ Inverted Target detected! target={target_price} <= entry={ask_fill}. Forcing fallback Target.")
+        target_price = round(ask_fill + config.DEFAULT_TARGET_POINTS, 2)
     
     return {
         "signal_type": "BUY_CE" if is_call else "BUY_PE",
