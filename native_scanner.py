@@ -196,9 +196,15 @@ class NativeMarketScanner:
 
         # 4. Reliable Direct Crossover Logic + Trend Filter + State Machine
         pos_state = 0
-        latest_c5 = candles_5m[-1]
-        candle_timestamp = latest_c5["time"]
         new_signal = None
+
+        # Confirmed Bar Close Execution (barstate.isconfirmed):
+        # Prevents intra-bar repainting and mid-candle wick fakeouts.
+        # A candle is confirmed when its 300-second window has completed.
+        now_ts = time.time()
+        eval_idx = n - 1 if (now_ts >= candles_5m[-1]["time"] + 290) else (n - 2 if n >= 2 else n - 1)
+        eval_candle = candles_5m[eval_idx]
+        candle_timestamp = eval_candle["time"]
 
         for i in range(1, n):
             close = candles_5m[i]["close"]
@@ -229,11 +235,11 @@ class NativeMarketScanner:
             buy_signal_confirmed = buy_signal_raw and pos_state <= 0
             sell_signal_confirmed = sell_signal_raw and pos_state >= 0
 
-            # Emit signal if raw trigger fired (matching GoCharting chart arrows 1:1)
+            # Emit signal ONLY on confirmed closed bar!
             # The execution engine checks if already in trade to prevent duplicate entries
             if buy_signal_raw:
                 pos_state = 1
-                if i == n - 1 and candle_timestamp != self.last_candle_time:
+                if i == eval_idx and candle_timestamp != self.last_candle_time:
                     self.last_candle_time = candle_timestamp
                     new_signal = {
                         "signal": "BUY_CE",
@@ -245,7 +251,7 @@ class NativeMarketScanner:
                     }
             elif sell_signal_raw:
                 pos_state = -1
-                if i == n - 1 and candle_timestamp != self.last_candle_time:
+                if i == eval_idx and candle_timestamp != self.last_candle_time:
                     self.last_candle_time = candle_timestamp
                     new_signal = {
                         "signal": "BUY_PE",
@@ -257,7 +263,7 @@ class NativeMarketScanner:
                     }
 
         self.last_position = pos_state
-        latest_spot = latest_c5["close"]
+        latest_spot = candles_5m[-1]["close"]
         return pos_state, latest_spot, new_signal
 
     def scan_and_execute_cycle(self):

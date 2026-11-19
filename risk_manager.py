@@ -84,6 +84,24 @@ def validate_signal_armor(signal_data: Dict[str, Any]) -> Tuple[bool, str]:
     if required_margin > max_margin_allowed:
         return False, f"Position Sizing Cap: Required margin ₹{required_margin:,.2f} exceeds max 50% wallet allocation (₹{max_margin_allowed:,.2f})!"
 
+    # 10. Higher-Timeframe Trend Shield (Rule 16: Never fade extreme trend days)
+    # If Nifty has gained >= 0.75% intraday, block counter-trend PE scalp trades.
+    # Conversely, if Nifty is down <= -0.75% intraday, block counter-trend CE scalp trades.
+    if not is_test:
+        try:
+            import macro_radar
+            macro = macro_radar.get_macro_sentiment()
+            nifty_chg = float(macro.get("nifty", {}).get("change", 0.0) or 0.0)
+            is_pe = "PE" in signal_type or "PUT" in signal_type or "SHORT" in signal_type
+            is_ce = "CE" in signal_type or ("BUY" in signal_type and not is_pe)
+            
+            if nifty_chg >= 0.75 and is_pe:
+                return False, f"Extreme Trend Shield: Nifty is up +{nifty_chg:.2f}% (Raging Bull Day). Counter-trend PE entries strictly blocked!"
+            if nifty_chg <= -0.75 and is_ce:
+                return False, f"Extreme Trend Shield: Nifty is down {nifty_chg:.2f}% (Bloodbath Day). Counter-trend CE entries strictly blocked!"
+        except Exception as e:
+            logger.debug(f"Trend shield check skipped: {e}")
+
     return True, "APPROVED"
 
 def calculate_dynamic_greek_brackets(entry_premium: float, delta: float = 0.50, spot_atr: float = 22.0) -> Tuple[float, float, str]:
