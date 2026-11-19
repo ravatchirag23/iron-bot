@@ -55,25 +55,47 @@ class NativeMarketScanner:
     def fetch_intraday_candles(self) -> List[Dict[str, float]]:
         """
         Fetches official 5m candles for NIFTY 50 (^NSEI) matching GoCharting 5m chart 1:1.
+        Fetches a 5-day rolling window to guarantee warm EMA(20) and ATR(10) buffers starting
+        at 09:15 AM every session, eliminating morning cold-start blindness.
         Zero external library dependencies.
         """
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI?interval=5m&range=1d"
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI?interval=5m&range=5d"
         req = urllib.request.Request(url, headers=HEADERS)
         try:
             with urllib.request.urlopen(req, context=_ssl_ctx, timeout=6) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
 
-            res = data["chart"]["result"][0]
-            times = res["timestamp"]
-            q = res["indicators"]["quote"][0]
+            res = data.get("chart", {}).get("result", [{}])[0]
+            times = res.get("timestamp")
+            if not times:
+                logger.warning("[SCANNER] No timestamp data returned by chart API")
+                return []
+            q = res.get("indicators", {}).get("quote", [{}])[0]
+            opens = q.get("open", [])
+            highs = q.get("high", [])
+            lows = q.get("low", [])
+            closes = q.get("close", [])
 
             candles = []
             for i in range(len(times)):
                 t = times[i]
-                o, h, l, c = q["open"][i], q["high"][i], q["low"][i], q["close"][i]
+                o, h, l, c = opens[i], highs[i], lows[i], closes[i]
                 if None in (o, h, l, c):
                     continue
-                candles.append({"time": t, "open": o, "high": h, "low": l, "close": c})
+                # If synthetic unclosed intra-bar tick (t % 300 != 0), update current candle live tick
+                if t % 300 != 0:
+                    if candles:
+                        candles[-1]["close"] = round(float(c), 2)
+                        candles[-1]["high"] = max(candles[-1]["high"], round(float(c), 2))
+                        candles[-1]["low"] = min(candles[-1]["low"], round(float(c), 2))
+                    continue
+                candles.append({
+                    "time": int(t),
+                    "open": round(float(o), 2),
+                    "high": round(float(h), 2),
+                    "low": round(float(l), 2),
+                    "close": round(float(c), 2)
+                })
 
             return candles
         except Exception as e:
@@ -187,6 +209,7 @@ class NativeMarketScanner:
             ts = trail_sell[i]
             prev_ts = trail_sell[i-1]
             e = ema[i]
+            prev_e = ema[i-1]
 
             trend_bull = not self.use_ema_filter or close > e
             trend_bear = not self.use_ema_filter or close < e
@@ -194,8 +217,14 @@ class NativeMarketScanner:
             above_buy_cross = (tb is not None and prev_tb is not None and close > tb and prev_close <= prev_tb)
             below_sell_cross = (ts is not None and prev_ts is not None and close < ts and prev_close >= prev_ts)
 
-            buy_signal_raw = above_buy_cross and trend_bull
-            sell_signal_raw = below_sell_cross and trend_bear
+            ema_break_up = (e is not None and prev_e is not None and close > e and prev_close <= prev_e)
+            ema_break_dn = (e is not None and prev_e is not None and close < e and prev_close >= prev_e)
+
+            # Bullet-proof dual trigger (100% Exact match to ut-bot-clean.lipi):
+            # 1. Trail crossover confirmed by Bull EMA trend, OR
+            # 2. Bull EMA breakout while already riding above trailing stop
+            buy_signal_raw = (above_buy_cross and trend_bull) or (self.use_ema_filter and ema_break_up and (tb is not None and close > tb))
+            sell_signal_raw = (below_sell_cross and trend_bear) or (self.use_ema_filter and ema_break_dn and (ts is not None and close < ts))
 
             buy_signal_confirmed = buy_signal_raw and pos_state <= 0
             sell_signal_confirmed = sell_signal_raw and pos_state >= 0
