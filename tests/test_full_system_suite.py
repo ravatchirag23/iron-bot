@@ -137,11 +137,36 @@ class TestIronArmorRulesValidation(unittest.TestCase):
             self.assertIn("European Market Open", reason)
 
     def test_giant_exhaustion_candle_filter(self):
-        # Candle range 50 > 45 max points
-        signal = {"signal": "BUY_CE", "spot": 25200.0, "candle_range": 50.0, "is_test": True}
+        # Candle range 70 > 65 max points without wick info -> rejected as exhaustion
+        signal = {"signal": "BUY_CE", "spot": 25200.0, "candle_range": 70.0, "is_test": True}
         approved, reason = risk_manager.validate_signal_armor(signal)
         self.assertFalse(approved)
         self.assertIn("Exhaustion candle detected", reason)
+
+        # Candle range 70 with heavy upper wick (> 35% rejection) -> rejected
+        signal_wick = {
+            "signal": "BUY_CE",
+            "spot": 25200.0,
+            "candle_range": 70.0,
+            "candle_high": 25240.0,
+            "candle_close": 25200.0,  # 40 pt upper wick / 70 = 57%
+            "is_test": True
+        }
+        approved, reason = risk_manager.validate_signal_armor(signal_wick)
+        self.assertFalse(approved)
+        self.assertIn("Heavy upper wick rejection", reason)
+
+        # Candle range 70 with solid body (closing near high, upper wick <= 35%) -> approved as Momentum Breakout
+        signal_breakout = {
+            "signal": "BUY_CE",
+            "spot": 25200.0,
+            "candle_range": 70.0,
+            "candle_high": 25202.0,
+            "candle_close": 25200.0,  # 2 pt upper wick / 70 = 2.8%
+            "is_test": True
+        }
+        approved, reason = risk_manager.validate_signal_armor(signal_breakout)
+        self.assertTrue(approved)
 
 
 class TestPaperTradingEngineLifecycle(unittest.TestCase):

@@ -64,11 +64,11 @@ class TestIronArmorRules(unittest.TestCase):
         self.assertEqual(risk_manager.get_atm_strike(25075.0, is_call=False), 25100)
 
     def test_exhaustion_giant_candle_filter(self):
-        # Signal candle > 45 pts must be blocked by Rule 10
+        # Signal candle > 65 pts must be blocked by Rule 10
         signal_data = {
             "signal": "BUY_CE",
             "spot": 25100.0,
-            "candle_range": 52.0, # Exceeds 45 pt max
+            "candle_range": 72.0, # Exceeds 65 pt max
             "is_test": True
         }
         approved, reason = risk_manager.validate_signal_armor(signal_data)

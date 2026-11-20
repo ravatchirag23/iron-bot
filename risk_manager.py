@@ -63,10 +63,39 @@ def validate_signal_armor(signal_data: Dict[str, Any]) -> Tuple[bool, str]:
     if not is_test and database.is_duplicate_alert(signal_type, config.DEBOUNCE_WINDOW_SECONDS):
         return False, f"Duplicate signal detected within {config.DEBOUNCE_WINDOW_SECONDS}s window. Debounce active!"
 
-    # 8. Exhaustion Giant Candle Filter (Rule 10)
+    # 8. Exhaustion Giant Candle Filter (Rule 10 — Upgraded for Momentum vs Exhaustion)
     candle_range = signal_data.get("candle_range", 0.0)
-    if candle_range > config.MAX_CANDLE_RANGE_POINTS:
-        return False, f"Exhaustion candle detected ({candle_range:.1f} pts > {config.MAX_CANDLE_RANGE_POINTS} pts max). Do not buy top!"
+    max_range = getattr(config, "MAX_CANDLE_RANGE_POINTS", 65.0)
+    
+    if candle_range > max_range:
+        # Absolute ceiling: Black swan mega bar (> 85 pts / ~4x ATR) is always skipped
+        if candle_range > 85.0:
+            return False, f"Mega-bar volatility spike ({candle_range:.1f} pts > 85 pts max cap). Risk too high!"
+
+        # Check if candle is an institutional Marubozu Breakout or true Wick Exhaustion
+        if "candle_high" in signal_data and "candle_close" in signal_data:
+            c_high = float(signal_data["candle_high"])
+            c_low = float(signal_data.get("candle_low", c_high - candle_range))
+            c_close = float(signal_data["candle_close"])
+            is_ce = "CE" in signal_type or ("BUY" in signal_type and "PE" not in signal_type)
+            
+            if is_ce and candle_range > 0:
+                upper_wick = max(0.0, c_high - c_close)
+                wick_ratio = upper_wick / candle_range
+                if wick_ratio > 0.35:
+                    return False, f"Exhaustion candle: Heavy upper wick rejection ({upper_wick:.1f} pts, {wick_ratio*100:.0f}% of range). Do not buy top!"
+                else:
+                    logger.info(f"⚡ [MOMENTUM BREAKOUT] Large candle ({candle_range:.1f} pts) accepted: Closed in top {(1-wick_ratio)*100:.0f}% of bar (Solid Bullish Body).")
+            elif not is_ce and candle_range > 0:
+                lower_wick = max(0.0, c_close - c_low)
+                wick_ratio = lower_wick / candle_range
+                if wick_ratio > 0.35:
+                    return False, f"Exhaustion candle: Heavy lower wick bounce ({lower_wick:.1f} pts, {wick_ratio*100:.0f}% of range). Do not buy bottom!"
+                else:
+                    logger.info(f"⚡ [MOMENTUM BREAKDOWN] Large candle ({candle_range:.1f} pts) accepted: Closed in bottom {(1-wick_ratio)*100:.0f}% of bar (Solid Bearish Body).")
+        else:
+            # High/Close not provided: safely treat oversized candle as exhaustion
+            return False, f"Exhaustion candle detected ({candle_range:.1f} pts > {max_range} pts max). Do not buy top!"
 
     # 9. Capital & Wallet Margin Protection (Rule 15: ₹50K Wallet Cap)
     wallet = database.get_wallet_stats()

@@ -244,7 +244,10 @@ class NativeMarketScanner:
                     new_signal = {
                         "signal": "BUY_CE",
                         "spot": close,
+                        "candle_open": candles_5m[i]["open"],
+                        "candle_high": candles_5m[i]["high"],
                         "candle_low": candles_5m[i]["low"],
+                        "candle_close": close,
                         "candle_range": round(candles_5m[i]["high"] - candles_5m[i]["low"], 2),
                         "timestamp": candle_timestamp,
                         "is_reversal": buy_signal_confirmed
@@ -256,7 +259,10 @@ class NativeMarketScanner:
                     new_signal = {
                         "signal": "BUY_PE",
                         "spot": close,
-                        "candle_low": candles_5m[i]["high"],
+                        "candle_open": candles_5m[i]["open"],
+                        "candle_high": candles_5m[i]["high"],
+                        "candle_low": candles_5m[i]["low"],
+                        "candle_close": close,
                         "candle_range": round(candles_5m[i]["high"] - candles_5m[i]["low"], 2),
                         "timestamp": candle_timestamp,
                         "is_reversal": sell_signal_confirmed

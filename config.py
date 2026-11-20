@@ -81,7 +81,7 @@ MILESTONE_2_TRIGGER = 22.0      # At +22 pts: Lock minimum +10 pts profit
 MILESTONE_3_TRIGGER = 35.0      # At +35 pts: Lock minimum +22 pts profit
 
 # Rule 10: Exhaustion Candle Filter (Avoid Buying the Top of a Giant Candle)
-MAX_CANDLE_RANGE_POINTS = 45.0  # If signal candle > 45 index points, skip entry
+MAX_CANDLE_RANGE_POINTS = 65.0  # Scaled for Nifty 25,600+ (~3.0x ATR). If range > 65 pts, inspect wick exhaustion
 
 # Rule 11: Theta Decay & Time Stagnation Protection (Gap #2)
 STAGNATION_TIMEOUT_MINUTES = 45 # Exit if position stagnant after 45 minutes
