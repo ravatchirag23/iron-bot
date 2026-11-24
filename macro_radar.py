@@ -28,7 +28,10 @@ logger = logging.getLogger("IronBot.MacroRadar")
 
 _cached_macro = None
 _last_macro_time = 0.0
-MACRO_CACHE_TTL = 12.0 # 12-second cache for ultra-fast, live-ticking dashboard
+MACRO_CACHE_TTL = 30.0 # 30-second cache: eliminates Yahoo 429 rate limits on EC2 while preserving live feel
+
+_last_saved_gift_price = 0.0
+_last_saved_gift_time = 0.0
 
 _cached_news = []
 _last_news_time = 0.0
@@ -197,11 +200,15 @@ def fetch_gift_nifty() -> Tuple[float, float]:
                     raw_chg = str(row.get("PERCHANGE", "0")).strip()
                     chg = float(raw_chg) if raw_chg else 0.0
                     if price > 0:
-                        try:
-                            database.set_config("last_gift_nifty_price", str(price))
-                            database.set_config("last_gift_nifty_chg", str(chg))
-                        except Exception:
-                            pass
+                        global _last_saved_gift_price, _last_saved_gift_time
+                        if abs(price - _last_saved_gift_price) >= 1.0 or (time.time() - _last_saved_gift_time) > 300.0:
+                            try:
+                                database.set_config("last_gift_nifty_price", str(price))
+                                database.set_config("last_gift_nifty_chg", str(chg))
+                                _last_saved_gift_price = price
+                                _last_saved_gift_time = time.time()
+                            except Exception:
+                                pass
                         return price, chg
     except Exception as e:
         logger.warning(f"Could not fetch GIFT Nifty from market-rate: {e}")
@@ -408,7 +415,7 @@ def send_morning_briefing() -> bool:
     )
     return telegram_notifier.send_telegram_alert(msg)
 
-def start_macro_background_worker(interval_seconds: int = 12):
+def start_macro_background_worker(interval_seconds: int = 30):
     """
     Spawns background daemon thread to continuously keep GIFT Nifty & Global Tickers hot.
     Guarantees sub-millisecond API response times and live dynamic updates.

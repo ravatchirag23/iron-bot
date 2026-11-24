@@ -185,9 +185,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 self._send_json(200, {"status": "EXIT_EXECUTED", "details": res})
                 return
             elif is_opposite:
-                # Square off old trade before entering opposite direction
+                # Square off old trade before entering opposite direction at market option quote
                 logger.info(f"Opposite signal {signal_type} received while holding #{active['id']} {active['symbol']}. Closing old position for reversal!")
-                paper_engine.engine.force_exit(spot_price, "INDICATOR_OPPOSITE_SIGNAL")
+                paper_engine.engine.force_exit(exit_price=None, reason="INDICATOR_OPPOSITE_SIGNAL")
 
         # 13 Iron Armor Rules Validation
         is_approved, reason = risk_manager.validate_signal_armor(signal_data)
@@ -427,11 +427,11 @@ def start_position_monitor_thread():
 def start_server():
     start_position_monitor_thread()
     
-    # Start Continuous Global Macro Radar Worker (12s background polling)
+    # Start Continuous Global Macro Radar Worker (30s background polling)
     try:
         import macro_radar
-        macro_radar.start_macro_background_worker(interval_seconds=12)
-        logger.info("⚡ Continuous Global Macro Radar worker started successfully (12s refresh)!")
+        macro_radar.start_macro_background_worker(interval_seconds=30)
+        logger.info("⚡ Continuous Global Macro Radar worker started successfully (30s refresh)!")
     except Exception as e:
         logger.warning(f"Macro worker startup exception: {e}")
 

@@ -40,7 +40,10 @@ def send_telegram_alert(message: str) -> bool:
             print(f"[TELEGRAM SUCCESS] Status: {response.status} | Result: {result}", flush=True)
             return response.status == 200
     except urllib.error.HTTPError as e:
-        err_body = e.read().decode("utf-8", errors="ignore")
+        try:
+            err_body = e.read().decode("utf-8", errors="ignore")
+        finally:
+            e.close()
         print(f"[TELEGRAM HTTP ERROR] Code: {e.code} | Reason: {err_body}", flush=True)
         logger.error(f"Telegram HTTP Error {e.code}: {err_body}")
         return False

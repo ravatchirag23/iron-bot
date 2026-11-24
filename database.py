@@ -7,14 +7,31 @@ import sqlite3
 import os
 from datetime import datetime, date
 from typing import Optional, Dict, Any, List
+from contextlib import contextmanager
 import config
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "trades.db")
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA busy_timeout = 15000;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
     return conn
+
+@contextmanager
+def db_session():
+    """Thread-safe context manager guaranteeing safe commits, rollbacks, and connection closures."""
+    conn = get_connection()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 def init_db():
     conn = get_connection()
@@ -86,184 +103,180 @@ def init_db():
     except sqlite3.OperationalError:
         pass # Column already exists
     
+    # High-Performance Indexes for 0ms Active Trade & Ledger Query Execution
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_date ON trades(trade_date);")
+    
     conn.commit()
     conn.close()
 
 def log_event(event_type: str, details: str):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO audit_logs (timestamp, event_type, details) VALUES (?, ?, ?)",
-        (config.get_now_str_ist(), event_type, details)
-    )
-    conn.commit()
-    conn.close()
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO audit_logs (timestamp, event_type, details) VALUES (?, ?, ?)",
+            (config.get_now_str_ist(), event_type, details)
+        )
 
 def is_duplicate_alert(signal_type: str, debounce_seconds: int = 60) -> bool:
     """Check if same signal arrived within debounce window to prevent duplicate executions."""
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT timestamp FROM audit_logs 
-        WHERE event_type = ? 
-        ORDER BY id DESC LIMIT 1
-    """, (f"SIGNAL_RECEIVED_{signal_type}",))
-    row = cursor.fetchone()
-    conn.close()
-    
-    if not row:
-        return False
-        
-    last_time = datetime.strptime(row["timestamp"], "%Y-%m-%d %H:%M:%S")
-    now_naive = config.get_now_ist().replace(tzinfo=None)
-    elapsed = (now_naive - last_time).total_seconds()
-    return elapsed < debounce_seconds
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT timestamp FROM audit_logs 
+            WHERE event_type = ? 
+            ORDER BY id DESC LIMIT 1
+        """, (f"SIGNAL_RECEIVED_{signal_type}",))
+        row = cursor.fetchone()
+        if not row:
+            return False
+            
+        last_time = datetime.strptime(row["timestamp"], "%Y-%m-%d %H:%M:%S")
+        now_naive = config.get_now_ist().replace(tzinfo=None)
+        elapsed = (now_naive - last_time).total_seconds()
+        return elapsed < debounce_seconds
+    finally:
+        conn.close()
 
 def get_today_stats(today_str: Optional[str] = None) -> Dict[str, Any]:
     if not today_str:
         today_str = config.get_today_ist()
         
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM daily_tracker WHERE trade_date = ?", (today_str,))
-    row = cursor.fetchone()
-    
-    if not row:
-        cursor.execute("INSERT OR IGNORE INTO daily_tracker (trade_date, trade_count, total_pnl_rupees, is_locked) VALUES (?, 0, 0.0, 0)", (today_str,))
-        conn.commit()
-        stats = {"trade_date": today_str, "trade_count": 0, "total_pnl_rupees": 0.0, "is_locked": 0, "lock_reason": ""}
-    else:
-        stats = dict(row)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM daily_tracker WHERE trade_date = ?", (today_str,))
+        row = cursor.fetchone()
         
-    conn.close()
-    return stats
+        if not row:
+            cursor.execute("INSERT OR IGNORE INTO daily_tracker (trade_date, trade_count, total_pnl_rupees, is_locked) VALUES (?, 0, 0.0, 0)", (today_str,))
+            conn.commit()
+            stats = {"trade_date": today_str, "trade_count": 0, "total_pnl_rupees": 0.0, "is_locked": 0, "lock_reason": ""}
+        else:
+            stats = dict(row)
+        return stats
+    finally:
+        conn.close()
 
 def record_trade_entry(trade_data: Dict[str, Any]) -> int:
-    conn = get_connection()
-    cursor = conn.cursor()
-    
     today_str = config.get_today_ist()
     now_str = config.get_now_str_ist()
     
     is_runner = 1 if trade_data.get("is_runner", False) else 0
     initial_sl = float(trade_data.get("initial_sl_price") or trade_data["sl_price"])
 
-    cursor.execute("""
-        INSERT INTO trades (
-            trade_date, timestamp, signal_type, symbol, spot_price,
-            entry_price, sl_price, initial_sl_price, target_price, quantity, status, is_paper, is_runner
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 1, ?)
-    """, (
-        today_str, now_str, trade_data["signal_type"], trade_data["symbol"],
-        trade_data["spot_price"], trade_data["entry_price"], trade_data["sl_price"],
-        initial_sl, trade_data["target_price"], trade_data["quantity"], is_runner
-    ))
-    
-    trade_id = cursor.lastrowid
-    
-    # Increment daily count
-    cursor.execute("""
-        INSERT INTO daily_tracker (trade_date, trade_count, total_pnl_rupees, is_locked)
-        VALUES (?, 1, 0.0, 0)
-        ON CONFLICT(trade_date) DO UPDATE SET trade_count = trade_count + 1
-    """, (today_str,))
-    
-    conn.commit()
-    conn.close()
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO trades (
+                trade_date, timestamp, signal_type, symbol, spot_price,
+                entry_price, sl_price, initial_sl_price, target_price, quantity, status, is_paper, is_runner
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 1, ?)
+        """, (
+            today_str, now_str, trade_data["signal_type"], trade_data["symbol"],
+            trade_data["spot_price"], trade_data["entry_price"], trade_data["sl_price"],
+            initial_sl, trade_data["target_price"], trade_data["quantity"], is_runner
+        ))
+        
+        trade_id = cursor.lastrowid
+        
+        # Increment daily count
+        cursor.execute("""
+            INSERT INTO daily_tracker (trade_date, trade_count, total_pnl_rupees, is_locked)
+            VALUES (?, 1, 0.0, 0)
+            ON CONFLICT(trade_date) DO UPDATE SET trade_count = trade_count + 1
+        """, (today_str,))
     
     log_event(f"TRADE_ENTERED_{trade_data['signal_type']}", f"Trade #{trade_id} on {trade_data['symbol']} @ {trade_data['entry_price']}")
     return trade_id
 
 def record_trade_exit(trade_id: int, exit_price: float, exit_reason: str, pnl_points: float, pnl_rupees: float):
-    conn = get_connection()
-    cursor = conn.cursor()
-    
     now_str = config.get_now_str_ist()
     today_str = config.get_today_ist()
     
-    cursor.execute("""
-        UPDATE trades SET
-            exit_price = ?,
-            exit_time = ?,
-            exit_reason = ?,
-            pnl_points = ?,
-            pnl_rupees = ?,
-            status = 'CLOSED'
-        WHERE id = ?
-    """, (exit_price, now_str, exit_reason, pnl_points, pnl_rupees, trade_id))
-    
-    # Update daily total PnL
-    cursor.execute("""
-        UPDATE daily_tracker SET
-            total_pnl_rupees = total_pnl_rupees + ?
-        WHERE trade_date = ?
-    """, (pnl_rupees, today_str))
-    
-    conn.commit()
-    conn.close()
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE trades SET
+                exit_price = ?,
+                exit_time = ?,
+                exit_reason = ?,
+                pnl_points = ?,
+                pnl_rupees = ?,
+                status = 'CLOSED'
+            WHERE id = ?
+        """, (exit_price, now_str, exit_reason, pnl_points, pnl_rupees, trade_id))
+        
+        # Update daily total PnL
+        cursor.execute("""
+            UPDATE daily_tracker SET
+                total_pnl_rupees = total_pnl_rupees + ?
+            WHERE trade_date = ?
+        """, (pnl_rupees, today_str))
     
     log_event("TRADE_EXITED", f"Trade #{trade_id} closed @ {exit_price} | PnL: {pnl_points:.1f} pts (₹{pnl_rupees:.2f}) | Reason: {exit_reason}")
 
 def lock_system_today(reason: str):
-    conn = get_connection()
-    cursor = conn.cursor()
     today_str = config.get_today_ist()
-    cursor.execute("""
-        UPDATE daily_tracker SET is_locked = 1, lock_reason = ? WHERE trade_date = ?
-    """, (reason, today_str))
-    conn.commit()
-    conn.close()
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE daily_tracker SET is_locked = 1, lock_reason = ? WHERE trade_date = ?
+        """, (reason, today_str))
     log_event("SYSTEM_LOCKED", f"System locked for {today_str}: {reason}")
 
 def get_active_trade() -> Optional[Dict[str, Any]]:
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM trades WHERE status = 'ACTIVE' ORDER BY id DESC LIMIT 1")
-    row = cursor.fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM trades WHERE status = 'ACTIVE' ORDER BY id DESC LIMIT 1")
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
 
 def get_all_trades(limit: int = 20) -> List[Dict[str, Any]]:
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM trades ORDER BY id DESC LIMIT ?", (limit,))
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM trades ORDER BY id DESC LIMIT ?", (limit,))
+        rows = cursor.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 def get_config(key: str, default: Optional[str] = None) -> Optional[str]:
     """Retrieves dynamic config value from system_config."""
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT value FROM system_config WHERE key = ?", (key,))
-    row = cursor.fetchone()
-    conn.close()
-    return row["value"] if row else default
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM system_config WHERE key = ?", (key,))
+        row = cursor.fetchone()
+        return row["value"] if row else default
+    finally:
+        conn.close()
 
 def set_config(key: str, value: str):
     """Saves or updates dynamic config value in system_config."""
-    conn = get_connection()
-    cursor = conn.cursor()
     now_str = config.get_now_str_ist()
-    cursor.execute("""
-        INSERT INTO system_config (key, value, updated_at) 
-        VALUES (?, ?, ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-    """, (key, value, now_str))
-    conn.commit()
-    conn.close()
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO system_config (key, value, updated_at) 
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        """, (key, value, now_str))
     log_event("CONFIG_UPDATED", f"Key '{key}' updated dynamically")
 
 def reset_daily_limits(today_str: Optional[str] = None):
     """Clears daily_tracker and closes any active trades for clean testing."""
     if not today_str:
         today_str = config.get_today_ist()
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM daily_tracker WHERE trade_date = ?", (today_str,))
-    cursor.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
-    conn.commit()
-    conn.close()
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM daily_tracker WHERE trade_date = ?", (today_str,))
+        cursor.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
 
 def get_wallet_stats() -> Dict[str, Any]:
     """
@@ -341,12 +354,15 @@ def get_wallet_stats() -> Dict[str, Any]:
         
     conn.close()
     
+    safe_initial_capital = initial_capital if initial_capital > 0 else 50000.0
+    safe_duration_days = max(1, duration_days)
+    
     current_balance = round(initial_capital + realized_pnl, 2)
     available_margin = max(0.0, round(current_balance - margin_used, 2))
-    roi_pct = round((realized_pnl / initial_capital) * 100.0, 2)
+    roi_pct = round((realized_pnl / safe_initial_capital) * 100.0, 2)
     
-    target_profit = round(initial_capital * (target_roi_pct / 100.0), 2)
-    target_balance = round(initial_capital + target_profit, 2)
+    target_profit = round(safe_initial_capital * (target_roi_pct / 100.0), 2)
+    target_balance = round(safe_initial_capital + target_profit, 2)
     progress_to_target = 0.0
     if target_profit > 0 and realized_pnl > 0:
         progress_to_target = min(100.0, round((realized_pnl / target_profit) * 100.0, 1))
@@ -355,7 +371,7 @@ def get_wallet_stats() -> Dict[str, Any]:
     max_safe_drawdown = round(current_balance - preservation_floor, 2)
     
     # Timeline percentage (e.g. Day 1 of 30 = 3.3%)
-    timeline_pct = min(100, max(0, int((day_number / duration_days) * 100)))
+    timeline_pct = min(100, max(0, int((day_number / safe_duration_days) * 100)))
 
     return {
         "campaign_name": "30-Day ₹50K Alpha Campaign",

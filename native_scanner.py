@@ -344,8 +344,8 @@ class NativeMarketScanner:
             active_is_ce = "CE" in active["symbol"]
             signal_is_pe = "PE" in sig_type
             if (active_is_ce and signal_is_pe) or (not active_is_ce and not signal_is_pe):
-                logger.info(f"Opposite signal {sig_type} detected for active position #{active['id']}. Forcing reversal exit!")
-                paper_engine.engine.force_exit(spot, "UT_BOT_REVERSAL_EXIT")
+                logger.info(f"Opposite signal {sig_type} detected for active position #{active['id']}. Forcing reversal exit at market option quote!")
+                paper_engine.engine.force_exit(exit_price=None, reason="UT_BOT_REVERSAL_EXIT")
                 # Position is now closed in DB, proceed to enter opposite direction!
             else:
                 logger.info(f"Already in active trade #{active['id']} on {active['symbol']}. Ignoring duplicate {sig_type}.")

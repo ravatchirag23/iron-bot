@@ -14,7 +14,7 @@ Features:
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, time
 from typing import Dict, Any, List
 import config
 import database
@@ -190,8 +190,8 @@ def get_live_dashboard_state() -> Dict[str, Any]:
         conviction_color = "#EF4444"
 
     # 8C. Midday Defense Status (11:30 to 13:15 IST)
-    midday_start = getattr(config, "MIDDAY_START_TIME", config.time(11, 30))
-    midday_end = getattr(config, "MIDDAY_END_TIME", config.time(13, 15))
+    midday_start = getattr(config, "MIDDAY_START_TIME", time(11, 30))
+    midday_end = getattr(config, "MIDDAY_END_TIME", time(13, 15))
     is_midday = midday_start <= current_t <= midday_end
     
     if is_midday:
