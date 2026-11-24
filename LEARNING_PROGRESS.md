@@ -140,10 +140,10 @@
 - **Ephemeral Test Database Isolation:** Created `tests/__init__.py` pointing `IRON_BOT_DB_PATH` to `/tmp/iron_bot_unit_tests.db` and bypassing live Telegram HTTP calls during testing (`IRON_BOT_TEST_MODE = 1`). Prevents test suites from colliding with the active EC2 production daemon (`iron-bot.service`).
 
 ### 2. Verification & Proof Before Ship
-- **Unit Testing:** Authored `tests/test_raw_meat_sanitation.py` covering all 6 sanitation attack vectors.
-- **Full Suite Regression:** **36/36 unit tests passed** locally and on AWS EC2 (`Ran 36 tests in 9.733s - OK`).
-- **Git Commit:** `261e799` pushed to `origin/main`.
-- **AWS EC2 Mumbai (`13.207.161.15`):** Deployed and restarted `iron-bot.service` (active running, PID 261986). Both Port 80 and Port 5001 returning HTTP 200 OK.
+- **Unit Testing:** Authored `tests/test_raw_meat_sanitation.py` covering all 9 adversarial sanitation attack vectors (including non-positive tick rejection, option chain null traversals, and negative VIX fractional power clamps).
+- **Full Suite Regression:** **39/39 unit tests passed** locally and on AWS EC2 (`Ran 39 tests in 3.074s - OK`).
+- **Git Commits:** `a88011a` and `16b6878` pushed to `origin/main`.
+- **AWS EC2 Mumbai (`13.207.161.15`):** Deployed, verified `iron-bot.service` active and running (PID 263276), verified Angel One broker authentication, and confirmed HTTP 200 on `/status` and `/api/live_state`.
 
 ---
 
