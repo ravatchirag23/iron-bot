@@ -13,8 +13,13 @@ import unittest
 import threading
 import time
 import os
+import tempfile
 import sqlite3
 from unittest.mock import patch
+
+os.environ["IRON_BOT_TEST_MODE"] = "1"
+if "IRON_BOT_DB_PATH" not in os.environ:
+    os.environ["IRON_BOT_DB_PATH"] = os.path.join(tempfile.gettempdir(), "iron_bot_unit_tests.db")
 
 import config
 import database

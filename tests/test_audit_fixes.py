@@ -7,9 +7,16 @@ Unit tests for audit fixes:
 """
 
 import unittest
+import os
+import tempfile
 from unittest.mock import patch
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
+os.environ["IRON_BOT_TEST_MODE"] = "1"
+if "IRON_BOT_DB_PATH" not in os.environ:
+    os.environ["IRON_BOT_DB_PATH"] = os.path.join(tempfile.gettempdir(), "iron_bot_unit_tests.db")
+
 import database
 import paper_engine
 import risk_manager
