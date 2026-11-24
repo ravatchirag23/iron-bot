@@ -18,8 +18,12 @@ _ssl_ctx.check_hostname = False
 _ssl_ctx.verify_mode = ssl.CERT_NONE
 
 def send_telegram_alert(message: str) -> bool:
-    """Send formatted markdown alert to Telegram. Falls back gracefully if no token configured."""
+    """Send formatted markdown alert to Telegram. Falls back gracefully if no token configured or in test mode."""
     print(f"\n📢 [IRON BOT ALERT]\n{message}\n" + "-"*45, flush=True)
+    
+    import os
+    if os.environ.get("IRON_BOT_TEST_MODE") == "1":
+        return True
     
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print(f"[TELEGRAM ERROR] Missing credentials. Token: {'SET' if TELEGRAM_BOT_TOKEN else 'MISSING'}, ChatID: {'SET' if TELEGRAM_CHAT_ID else 'MISSING'}", flush=True)

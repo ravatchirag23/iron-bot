@@ -10,10 +10,11 @@ from typing import Optional, Dict, Any, List
 from contextlib import contextmanager
 import config
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "trades.db")
+def get_db_path() -> str:
+    return os.environ.get("IRON_BOT_DB_PATH", os.path.join(os.path.dirname(__file__), "trades.db"))
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH, timeout=30.0)
+    conn = sqlite3.connect(get_db_path(), timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA busy_timeout = 15000;")
