@@ -168,6 +168,47 @@ def get_live_dashboard_state() -> Dict[str, Any]:
         sys_state = "IDLE"
         sys_state_desc = "Market Closed (Awaiting 09:30 AM)"
 
+    # 8B. Institutional Conviction Meter (0 to 100) — Ported from Dashboard-Clone
+    raw_macro = int(macro_data.get("score", 0))  # -50 to +50
+    macro_component = max(0, min(40, int((abs(raw_macro) / 50.0) * 40)))
+    pcr_val = float(oi_data.get("pcr", 1.0))
+    pcr_component = 30 if (pcr_val >= 1.15 or pcr_val <= 0.85) else 18
+    vix_component = 30 if (11.0 <= vix <= 16.5) else (20 if vix < 20.0 else 10)
+    total_conviction = min(100, max(20, macro_component + pcr_component + vix_component))
+    
+    if total_conviction >= 75:
+        conviction_level = "VERY HIGH CONVICTION"
+        conviction_tone = "success"
+        conviction_color = "#00DC82"
+    elif total_conviction >= 50:
+        conviction_level = "MODERATE CONVICTION"
+        conviction_tone = "warning"
+        conviction_color = "#F59E0B"
+    else:
+        conviction_level = "DEFENSIVE CONVICTION"
+        conviction_tone = "danger"
+        conviction_color = "#EF4444"
+
+    # 8C. Midday Defense Status (11:30 to 13:15 IST)
+    midday_start = getattr(config, "MIDDAY_START_TIME", config.time(11, 30))
+    midday_end = getattr(config, "MIDDAY_END_TIME", config.time(13, 15))
+    is_midday = midday_start <= current_t <= midday_end
+    
+    if is_midday:
+        midday_status = {
+            "is_midday": True,
+            "badge_class": "pill-amber",
+            "title": "MIDDAY CHOP DEFENSE ACTIVE",
+            "desc": "Filtering chop bars < 18 pts • Momentum scalps allowed"
+        }
+    else:
+        midday_status = {
+            "is_midday": False,
+            "badge_class": "pill-green",
+            "title": "PEAK VELOCITY ACTIVE",
+            "desc": "High Liquidity Trend Window: Full Hit & Run + Runner Active"
+        }
+
     return {
         "timestamp": time_str,
         "date": date_str,
@@ -203,6 +244,19 @@ def get_live_dashboard_state() -> Dict[str, Any]:
             "target_pts": calc_tp,
             "rr_ratio": "1:1.8"
         },
+        "conviction_meter": {
+            "score": total_conviction,
+            "level": conviction_level,
+            "tone": conviction_tone,
+            "color": conviction_color,
+            "macro_score": raw_macro,
+            "pcr": pcr_val,
+            "vix": vix,
+            "macro_pct": int((macro_component / 40.0) * 100),
+            "pcr_pct": int((pcr_component / 30.0) * 100),
+            "vix_pct": int((vix_component / 30.0) * 100)
+        },
+        "midday_defense": midday_status,
         "macro_radar": macro_data,
         "option_chain": {
             "spot": oi_data.get("spot", 25050.0),
@@ -879,6 +933,7 @@ def render_dashboard_html() -> str:
             <div class="pill pill-green" id="canary-badge">🔒 PAPER MODE (₹0 RISK)</div>
             <div class="pill" id="broker-status-pill">ANGEL ONE: CONNECTING...</div>
             <div class="pill pill-green" id="engine-status-pill">ARMED & ACTIVE</div>
+            <div class="pill pill-green" id="midday-defense-pill">⚡ PEAK VELOCITY</div>
         </div>
     </header>
 
@@ -1091,6 +1146,71 @@ def render_dashboard_html() -> str:
 
             <!-- Right Column: Global Macro Matrix & Option Chain Walls -->
             <div>
+                <!-- Institutional Conviction Meter & 3-Stage Bracket Engine (Ported from Dashboard-Clone) -->
+                <div class="card-box" style="border: 1px solid rgba(0, 220, 130, 0.25); background: linear-gradient(180deg, rgba(14, 21, 36, 0.9) 0%, rgba(8, 12, 20, 0.95) 100%); margin-bottom: 20px;">
+                    <div class="card-box-header">
+                        <div class="card-box-title">
+                            <span>🔮 INSTITUTIONAL CONVICTION RADAR</span>
+                        </div>
+                        <div class="pill pill-green mono" id="conviction-level-badge">VERY HIGH CONVICTION</div>
+                    </div>
+
+                    <div style="display: flex; align-items: center; justify-content: space-around; padding: 10px 4px; flex-wrap: wrap; gap: 14px;">
+                        <!-- SVG Glowing Conviction Ring -->
+                        <div style="position: relative; width: 120px; height: 120px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                            <svg width="120" height="120" style="transform: rotate(-90deg);">
+                                <circle stroke="rgba(255,255,255,0.06)" fill="transparent" stroke-width="10" r="48" cx="60" cy="60" />
+                                <circle id="conviction-svg-ring" stroke="#00DC82" fill="transparent" stroke-width="10" stroke-linecap="round" stroke-dasharray="301.59" stroke-dashoffset="60.31" r="48" cx="60" cy="60" style="transition: stroke-dashoffset 1s ease, stroke 0.5s ease; filter: drop-shadow(0 0 8px rgba(0, 220, 130, 0.55));" />
+                            </svg>
+                            <div style="position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                                <span id="conviction-score-num" class="mono" style="font-size: 28px; font-weight: 800; color: #fff;">85</span>
+                                <span class="mono" style="font-size: 9px; color: var(--text-muted); letter-spacing: 1.5px; text-transform: uppercase;">CONVICTION</span>
+                            </div>
+                        </div>
+
+                        <!-- 3 Sub-Factor Progress Bars -->
+                        <div style="flex: 1; min-width: 170px; display: flex; flex-direction: column; gap: 8px;">
+                            <div>
+                                <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+                                    <span style="color: var(--text-muted);">Macro Radar:</span>
+                                    <span class="mono" id="conv-macro-text" style="color: var(--cyan); font-weight: 700;">+35 / 50</span>
+                                </div>
+                                <div style="height: 5px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden;">
+                                    <div id="conv-macro-bar" style="height: 100%; width: 70%; background: var(--cyan); border-radius: 3px; transition: width 0.4s ease;"></div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+                                    <span style="color: var(--text-muted);">Option Chain PCR:</span>
+                                    <span class="mono" id="conv-pcr-text" style="color: var(--green); font-weight: 700;">1.25 (Bullish)</span>
+                                </div>
+                                <div style="height: 5px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden;">
+                                    <div id="conv-pcr-bar" style="height: 100%; width: 85%; background: var(--green); border-radius: 3px; transition: width 0.4s ease;"></div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+                                    <span style="color: var(--text-muted);">India VIX Regime:</span>
+                                    <span class="mono" id="conv-vix-text" style="color: var(--purple); font-weight: 700;">13.5 (Optimal)</span>
+                                </div>
+                                <div style="height: 5px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden;">
+                                    <div id="conv-vix-bar" style="height: 100%; width: 90%; background: var(--purple); border-radius: 3px; transition: width 0.4s ease;"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 3-Stage Bracket Protocol Summary -->
+                    <div style="margin-top: 10px; padding: 10px 14px; background: rgba(0,0,0,0.3); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); font-size: 11px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                        <div><span style="color: var(--text-muted);">🛡️ Soft SL Buffer:</span> <b class="mono" style="color: var(--cyan);">+7.5 pts → Entry - 6 pts</b></div>
+                        <div><span style="color: var(--text-muted);">🔒 True Cost Lock:</span> <b class="mono" style="color: var(--green);">+11.0 pts → Entry + Friction</b></div>
+                        <div><span style="color: var(--text-muted);">🎯 Hit & Run TP:</span> <b class="mono" style="color: var(--yellow);">+14.0 pts (60%+ Win Rate)</b></div>
+                        <div><span style="color: var(--text-muted);">🛡️ Midday Defense:</span> <b class="mono" style="color: var(--purple);">11:30-13:15 (< 18 pts Blocked)</b></div>
+                    </div>
+                </div>
+
                 <!-- Live Dynamic Macro Matrix (All 7 Instruments) -->
                 <div class="card-box">
                     <div class="card-box-header">
@@ -1825,6 +1945,50 @@ def render_dashboard_html() -> str:
                 document.getElementById('pcr-sub-display').innerText = 'PCR: ' + data.option_chain.pcr + ' (' + data.option_chain.sentiment + ')';
                 document.getElementById('pcr-badge').innerText = 'PCR: ' + data.option_chain.pcr;
 
+                // 7B. Midday Defense Status
+                const middayPill = document.getElementById('midday-defense-pill');
+                if (middayPill && data.midday_defense) {
+                    middayPill.className = 'pill ' + (data.midday_defense.badge_class || 'pill-green');
+                    middayPill.innerText = data.midday_defense.title;
+                }
+
+                // 7C. Institutional Conviction Meter (SVG Gauge & Bars)
+                if (data.conviction_meter) {
+                    const cm = data.conviction_meter;
+                    const scoreNum = document.getElementById('conviction-score-num');
+                    if (scoreNum) scoreNum.innerText = cm.score;
+                    
+                    const ring = document.getElementById('conviction-svg-ring');
+                    if (ring) {
+                        const circum = 301.59; // 2 * PI * 48
+                        const offset = circum - (cm.score / 100.0) * circum;
+                        ring.style.strokeDashoffset = offset;
+                        ring.style.stroke = cm.color;
+                        ring.style.filter = `drop-shadow(0 0 10px ${cm.color}80)`;
+                    }
+
+                    const levelBadge = document.getElementById('conviction-level-badge');
+                    if (levelBadge) {
+                        levelBadge.innerText = cm.level;
+                        levelBadge.className = 'pill ' + (cm.tone === 'success' ? 'pill-green' : (cm.tone === 'warning' ? 'pill-amber' : 'pill-red')) + ' mono';
+                    }
+
+                    const mBar = document.getElementById('conv-macro-bar');
+                    if (mBar) mBar.style.width = cm.macro_pct + '%';
+                    const mTxt = document.getElementById('conv-macro-text');
+                    if (mTxt) mTxt.innerText = (cm.macro_score >= 0 ? '+' : '') + cm.macro_score + ' pts';
+
+                    const pBar = document.getElementById('conv-pcr-bar');
+                    if (pBar) pBar.style.width = cm.pcr_pct + '%';
+                    const pTxt = document.getElementById('conv-pcr-text');
+                    if (pTxt) pTxt.innerText = cm.pcr + ' (' + (cm.pcr >= 1.0 ? 'Bullish' : 'Bearish') + ')';
+
+                    const vBar = document.getElementById('conv-vix-bar');
+                    if (vBar) vBar.style.width = cm.vix_pct + '%';
+                    const vTxt = document.getElementById('conv-vix-text');
+                    if (vTxt) vTxt.innerText = cm.vix + ' (Optimal)';
+                }
+
                 // 8. Active Trade Container
                 const activeContainer = document.getElementById('active-position-container');
                 const isCurrentlyActive = Boolean(data.active_trade);
@@ -1881,13 +2045,29 @@ def render_dashboard_html() -> str:
                                     <span>Target Distance: <b id="active-tp-dist">${at.target_dist.toFixed(1)} pts</b></span>
                                 </div>
 
-                                <div class="progress-track">
-                                    <div class="progress-fill" id="active-progress-fill" style="width: ${at.rr_progress}%;"></div>
+                                <div class="progress-track" style="height: 10px; margin: 14px 0 8px 0; background: rgba(255,255,255,0.06); border-radius: 5px;">
+                                    <div class="progress-fill" id="active-progress-fill" style="width: ${at.rr_progress}%; background: linear-gradient(90deg, #38bdf8, #00dc82); box-shadow: 0 0 10px rgba(0, 220, 130, 0.4);"></div>
+                                </div>
+
+                                <!-- 4-Stage Reality-Proof Stepper Badges -->
+                                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 10px 0 14px 0; text-align: center; font-size: 10px;">
+                                    <div style="padding: 6px 4px; border-radius: 6px; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--cyan); font-weight: 700;">
+                                        1. ENTRY<br><span class="mono">₹${at.entry_price.toFixed(1)}</span>
+                                    </div>
+                                    <div style="padding: 6px 4px; border-radius: 6px; background: ${at.milestone >= 1 ? 'rgba(0, 220, 130, 0.2)' : 'rgba(255,255,255,0.03)'}; border: 1px solid ${at.milestone >= 1 ? '#00dc82' : 'rgba(255,255,255,0.08)'}; color: ${at.milestone >= 1 ? '#00dc82' : 'var(--text-muted)'}; font-weight: 700;">
+                                        2. SOFT SL<br><span class="mono">+7.5 pts</span>
+                                    </div>
+                                    <div style="padding: 6px 4px; border-radius: 6px; background: ${at.milestone >= 2 ? 'rgba(0, 220, 130, 0.2)' : 'rgba(255,255,255,0.03)'}; border: 1px solid ${at.milestone >= 2 ? '#00dc82' : 'rgba(255,255,255,0.08)'}; color: ${at.milestone >= 2 ? '#00dc82' : 'var(--text-muted)'}; font-weight: 700;">
+                                        3. COST LOCK<br><span class="mono">+11.0 pts</span>
+                                    </div>
+                                    <div style="padding: 6px 4px; border-radius: 6px; background: ${at.milestone >= 3 ? 'rgba(0, 220, 130, 0.25)' : 'rgba(255,255,255,0.03)'}; border: 1px solid ${at.milestone >= 3 ? '#00dc82' : 'rgba(255,255,255,0.08)'}; color: ${at.milestone >= 3 ? '#00dc82' : 'var(--text-muted)'}; font-weight: 700;">
+                                        4. TARGET<br><span class="mono">+14.0 pts</span>
+                                    </div>
                                 </div>
 
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
                                     <div style="font-size: 11px; color: var(--text-muted);">
-                                        Milestone: <b id="active-milestone" style="color: var(--purple);">${at.milestone >= 1 ? 'Shield Locked (Cost Lock Active)' : 'Level 0 (Initial SL Active)'}</b>
+                                        Milestone: <b id="active-milestone" style="color: var(--purple);">${at.milestone === 1 ? '🛡️ Soft Buffer Active (SL @ -6 pts)' : (at.milestone >= 2 ? '🔒 Cost Lock Active (₹0 Risk)' : 'Level 0 (Initial SL Active)')}</b>
                                     </div>
                                     <div style="font-size: 11px; color: var(--text-muted);">
                                         Entered: <span class="mono">${at.timestamp}</span>

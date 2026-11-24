@@ -56,6 +56,13 @@ AUTO_SQUARE_OFF_TIME = time(15, 15) # Mandatory exit at 3:15 PM
 EURO_BLACKOUT_START = time(13, 25)
 EURO_BLACKOUT_END = time(13, 45)
 
+# Rule 5B: Volatility-Gated Midday Defense Window (11:30 AM to 1:15 PM IST)
+# Protects against low-liquidity theta decay chop without starving trade count.
+MIDDAY_START_TIME = time(11, 30)
+MIDDAY_END_TIME = time(13, 15)
+MIDDAY_MIN_CANDLE_RANGE = 18.0       # Minimum 5m candle range in spot (pts) to allow midday trades
+MIDDAY_SCALP_TARGET_POINTS = 11.0    # Tighter Hit & Run scalp target during active midday momentum
+
 # Rule 6: Duplicate Webhook Protection (Idempotency)
 DEBOUNCE_WINDOW_SECONDS = 60    # Reject duplicate alerts within 60s
 
@@ -71,14 +78,23 @@ SPOT_NOISE_MULTIPLIER = 1.3         # 1.3x ATR breathing room to eliminate noise
 TARGET_RR_RATIO = 1.8               # 1:1.8 Risk-to-Reward Ratio (Institutional Target)
 MAX_SL_PREMIUM_PCT = 0.15           # Max 15% of premium risked on any trade
 MIN_SL_POINTS = 6.0                 # Minimum floor SL points
-DEFAULT_MICRO_SL_POINTS = 14.0      # Fallback baseline SL
-DEFAULT_TARGET_POINTS = 26.0        # Fallback baseline Target
+DEFAULT_MICRO_SL_POINTS = 14.0      # Fallback baseline SL (14 pts risk)
+DEFAULT_TARGET_POINTS = 14.0        # Realistic Hit & Run Target (+14 pts, locks ~₹910/lot on normal days)
 ENABLE_VIX_ADAPTIVE = True          # Scales SL/TP based on India VIX regime
 
-# Rule 9: Tiered Milestone Trailing Protection
-MILESTONE_1_TRIGGER = 12.0      # At +12 pts: Move SL to Entry (Cost / Breakeven)
-MILESTONE_2_TRIGGER = 22.0      # At +22 pts: Lock minimum +10 pts profit
-MILESTONE_3_TRIGGER = 35.0      # At +35 pts: Lock minimum +22 pts profit
+# Rule 9: Reality-Proof 3-Stage Bracket Engine (Solves Breakeven Choke Flaw)
+# Stage 1: Soft Risk Buffer (Leaves 6.0 pts breathing room for 2-tick pullback wicks, slashes risk 60%)
+SOFT_SL_TRIGGER_POINTS = 7.5        # At +7.5 pts gain: Move SL to Entry - 6.0 pts
+SOFT_SL_BUFFER_POINTS = 6.0         # Breathing room buffer below entry
+# Stage 2: True Cost Lock (Risk-Free Ride once trade develops momentum)
+COST_LOCK_TRIGGER_POINTS = 11.0     # At +11.0 pts gain: Move SL to Entry + BID_ASK_FRICTION_POINTS
+# Legacy milestones preserved for backward compatibility
+MILESTONE_1_TRIGGER = 11.0          # Cost lock threshold
+MILESTONE_2_TRIGGER = 18.0          # Profit lock threshold (+6 pts)
+MILESTONE_3_TRIGGER = 26.0          # Trend runner threshold (+14 pts)
+
+# Rule 9B: Trend Pullback Re-entry & Momentum Tracking
+TREND_PULLBACK_EMA_PERIOD = 20      # 20 EMA bounce re-entry filter
 
 # Rule 10: Exhaustion Candle Filter (Avoid Buying the Top of a Giant Candle)
 MAX_CANDLE_RANGE_POINTS = 65.0  # Scaled for Nifty 25,600+ (~3.0x ATR). If range > 65 pts, inspect wick exhaustion

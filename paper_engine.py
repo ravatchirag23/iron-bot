@@ -124,7 +124,7 @@ class PaperTradingEngine:
         except Exception:
             pass
 
-        # 1. Target Hit (Selling at Bid - Spread Friction)
+        # 1. Target Hit & Runner Trailing Extension
         is_runner = bool(trade.get("is_runner", 0))
 
         if not is_runner and current_price >= target:
@@ -139,6 +139,21 @@ class PaperTradingEngine:
             self.initial_sl_dist = 0.0
             self.milestone_reached = 0
             return {"status": "CLOSED", "reason": "TARGET_HIT", "pnl_rupees": pnl_rupees}
+        elif is_runner and current_price >= target:
+            # Trailing Target Extension for Trend Runners (Confluence days)
+            # Extend target by +10 pts and tighten trailing SL to lock profit
+            new_target = round(target + 10.0, 2)
+            new_sl = round(max(sl, target - 3.0), 2)
+            self._update_target(trade_id, new_target)
+            self._update_sl(trade_id, new_sl)
+            trade["target_price"] = new_target
+            trade["sl_price"] = new_sl
+            sl = new_sl
+            target = new_target
+            self.milestone_reached = max(self.milestone_reached, 3)
+            locked_pts = round(new_sl - entry, 1)
+            tag = f"🚀 RUNNER EXTENSION: Hit ₹{target:.2f}! Trailing Target extended to ₹{new_target:.2f} (SL locked @ ₹{new_sl:.2f} | +{locked_pts} pts profit)"
+            telegram_notifier.notify_trailing_update(symbol, tag, new_sl, locked_pts * qty)
 
         # 2. Stop-Loss Hit (Realistic Gap-Through Fill: use WORSE of actual price vs SL)
         if current_price <= sl:
@@ -148,6 +163,8 @@ class PaperTradingEngine:
             pnl_rupees = round(pnl_pts * qty, 2)
             if sl > entry:
                 reason = "RUNNER_TRAILING_HIT" if is_runner else "TRAILING_SL_HIT"
+            elif self.milestone_reached >= 1 and sl > (entry - 10.0):
+                reason = "SOFT_BUFFER_SL_HIT"
             else:
                 reason = "MICRO_SL_HIT"
             database.record_trade_exit(trade_id, bid_exit, reason, pnl_pts, pnl_rupees)
@@ -158,49 +175,52 @@ class PaperTradingEngine:
             self.milestone_reached = 0
             return {"status": "CLOSED", "reason": reason, "pnl_rupees": pnl_rupees}
 
-        # 3. Tiered Milestone Trailing Protection (Rule 9 & Dynamic Greeks Model)
-        # Use initial_sl_dist or initial_sl_price so trailing updates do not distort milestone thresholds
-        base_sl = float(trade.get("initial_sl_price") or trade.get("sl_price", sl))
-        initial_sl_dist = self.initial_sl_dist if self.initial_sl_dist > 0 else max(5.0, abs(entry - base_sl))
-        m1_trigger = round(initial_sl_dist * 1.0, 1)  # 1:1 RR Cost Lock (e.g. +14 pts on ATM, +7.6 pts on OTM)
-        m2_trigger = round(initial_sl_dist * 1.5, 1)  # 1:1.5 RR Profit Lock
-        m3_trigger = round(initial_sl_dist * 2.2, 1)  # 1:2.2 RR Big Breakout Lock
+        # 3. Reality-Proof 3-Stage Trailing Protection
+        soft_trigger = getattr(config, "SOFT_SL_TRIGGER_POINTS", 7.5)
+        soft_buffer = getattr(config, "SOFT_SL_BUFFER_POINTS", 6.0)
+        cost_trigger = getattr(config, "COST_LOCK_TRIGGER_POINTS", 11.0)
 
-        # Milestone 1: At 1:1 RR gain -> Move SL to Cost
-        if gain >= m1_trigger and self.milestone_reached < 1:
+        # Milestone 2: True Cost Lock (At +11.0 pts gain -> Move SL to Cost)
+        # Slashes risk to absolute zero once trade develops confirmed momentum
+        if gain >= cost_trigger and self.milestone_reached < 2:
             new_sl = entry
-            self._update_sl(trade_id, new_sl)
-            self.milestone_reached = 1
-            tag = f"+{gain:.1f} pts (Cost Lock - Runner Active)" if is_runner else f"+{gain:.1f} pts (Cost Lock @ ₹{entry:.2f})"
-            telegram_notifier.notify_trailing_update(symbol, tag, new_sl, 0.0)
+            if new_sl > sl:
+                self._update_sl(trade_id, new_sl)
+                sl = new_sl
+                self.milestone_reached = 2
+                tag = f"+{gain:.1f} pts (Cost Lock - Runner Active)" if is_runner else f"🔒 COST LOCK: +{gain:.1f} pts gain! SL locked at ₹{new_sl:.2f} (Risk-Free Ride)"
+                telegram_notifier.notify_trailing_update(symbol, tag, new_sl, 0.0)
 
-        # Milestone 2: At 1.5x RR gain -> Lock profit
-        elif gain >= m2_trigger and self.milestone_reached < 2:
-            locked_pts = round(initial_sl_dist * 0.75, 1)
+        # Milestone 1: Soft Risk Buffer (At +7.5 pts gain -> Tighten SL to Entry - 6.0 pts)
+        # Slashes risk by 60% while giving 6 pts breathing room for 2-tick pullback wicks
+        elif gain >= soft_trigger and self.milestone_reached < 1:
+            new_sl = round(entry - soft_buffer, 2)
+            if new_sl > sl:
+                self._update_sl(trade_id, new_sl)
+                sl = new_sl
+                self.milestone_reached = 1
+                tag = f"🛡️ SOFT RISK BUFFER: +{gain:.1f} pts gain! SL moved to ₹{new_sl:.2f} (Risk slashed 60%, 6 pt breathing room preserved)"
+                telegram_notifier.notify_trailing_update(symbol, tag, new_sl, 0.0)
+
+        # Milestone 3: Profit Lock for Confluence Trend Runners (At +18 pts -> Lock +8 pts)
+        elif is_runner and gain >= 18.0 and self.milestone_reached < 3:
+            locked_pts = 8.0
             new_sl = round(entry + locked_pts, 2)
-            self._update_sl(trade_id, new_sl)
-            self.milestone_reached = 2
-            tag = f"🏃 RUNNER: Target Approaching! Locked +{locked_pts} pts profit!" if is_runner else f"+{gain:.1f} pts (Lock +{locked_pts} pts @ ₹{new_sl:.2f})"
-            telegram_notifier.notify_trailing_update(symbol, tag, new_sl, locked_pts * qty)
+            if new_sl > sl:
+                self._update_sl(trade_id, new_sl)
+                self.milestone_reached = 3
+                tag = f"🏃 RUNNER: Giant Momentum! Locked +{locked_pts} pts profit @ ₹{new_sl:.2f}"
+                telegram_notifier.notify_trailing_update(symbol, tag, new_sl, locked_pts * qty)
 
-        # Milestone 3: At 2.2x RR gain -> Lock major profit
-        elif gain >= m3_trigger and self.milestone_reached < 3:
-            locked_pts = round(initial_sl_dist * 1.5, 1)
-            new_sl = round(entry + locked_pts, 2)
-            self._update_sl(trade_id, new_sl)
-            self.milestone_reached = 3
-            tag = f"🚀 RUNNER: Giant Move! Locked +{locked_pts} pts profit!" if is_runner else f"+{gain:.1f} pts (Lock +{locked_pts} pts @ ₹{new_sl:.2f})"
-            telegram_notifier.notify_trailing_update(symbol, tag, new_sl, locked_pts * qty)
-
-        # Milestone 4+: Infinite Ratchet Trailing for Confluence Trend Runners
-        elif is_runner and gain > 35.0:
-            offset = getattr(config, "RUNNER_TRAIL_OFFSET_POINTS", 15.0)
+        # Milestone 4+: Ratchet Trailing for Mega Trend Runners (Gain > 26 pts)
+        elif is_runner and gain > 26.0:
+            offset = getattr(config, "RUNNER_TRAIL_OFFSET_POINTS", 12.0)
             dynamic_sl = round(current_price - offset, 2)
             if dynamic_sl > (sl + 2.0): # Step up whenever price moves 2+ pts higher
                 self._update_sl(trade_id, dynamic_sl)
                 telegram_notifier.notify_trailing_update(
                     symbol, 
-                    f"🌊 RUNNER SURFING: +{gain:.1f} pts! Trailing SL raised", 
+                    f"🌊 RUNNER SURFING: +{gain:.1f} pts! Trailing SL raised to ₹{dynamic_sl:.2f}", 
                     dynamic_sl, 
                     (dynamic_sl - entry) * qty
                 )
@@ -211,6 +231,13 @@ class PaperTradingEngine:
         conn = database.get_connection()
         cursor = conn.cursor()
         cursor.execute("UPDATE trades SET sl_price = ? WHERE id = ?", (new_sl, trade_id))
+        conn.commit()
+        conn.close()
+
+    def _update_target(self, trade_id: int, new_target: float):
+        conn = database.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE trades SET target_price = ? WHERE id = ?", (new_target, trade_id))
         conn.commit()
         conn.close()
 

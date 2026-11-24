@@ -49,6 +49,7 @@ class NativeMarketScanner:
         self.ema_len = ema_len
         self.use_ema_filter = use_ema_filter
         self.last_candle_time = 0
+        self.last_pullback_time = 0
         self.last_position = 0 # 1 = Long/CE, -1 = Short/PE
         self.is_running = False
 
@@ -267,6 +268,57 @@ class NativeMarketScanner:
                         "timestamp": candle_timestamp,
                         "is_reversal": sell_signal_confirmed
                     }
+
+        # 5. Trend Pullback Re-entry Engine (Preserves Trade Frequency in Strong Trends)
+        # In established trends where UT Bot pos_state remains locked, allows high-probability
+        # re-entries when price pulls back to the 20 EMA and confirms a bounce.
+        if new_signal is None and eval_idx >= 2:
+            c_curr = candles_5m[eval_idx]
+            c_prev = candles_5m[eval_idx - 1]
+            e_curr = ema[eval_idx]
+            e_prev = ema[eval_idx - 1]
+            tb_curr = trail_buy[eval_idx]
+            ts_curr = trail_sell[eval_idx]
+            
+            # Check Bullish Pullback Bounce:
+            if pos_state == 1 and tb_curr is not None and c_curr["close"] > tb_curr:
+                pulled_to_ema = (c_prev["low"] <= e_prev + 12.0)
+                bounced_green = (c_curr["close"] > c_curr["open"]) and (c_curr["close"] > e_curr)
+                if pulled_to_ema and bounced_green and candle_timestamp != getattr(self, "last_pullback_time", 0) and candle_timestamp != self.last_candle_time:
+                    self.last_pullback_time = candle_timestamp
+                    new_signal = {
+                        "signal": "BUY_CE",
+                        "spot": c_curr["close"],
+                        "candle_open": c_curr["open"],
+                        "candle_high": c_curr["high"],
+                        "candle_low": c_curr["low"],
+                        "candle_close": c_curr["close"],
+                        "candle_range": round(c_curr["high"] - c_curr["low"], 2),
+                        "timestamp": candle_timestamp,
+                        "is_reversal": False,
+                        "pullback_reentry": True
+                    }
+                    logger.info(f"⚡ [TREND PULLBACK] Bullish 20 EMA bounce re-entry detected @ {c_curr['close']}")
+
+            # Check Bearish Pullback Bounce:
+            elif pos_state == -1 and ts_curr is not None and c_curr["close"] < ts_curr:
+                pulled_to_ema = (c_prev["high"] >= e_prev - 12.0)
+                rejected_red = (c_curr["close"] < c_curr["open"]) and (c_curr["close"] < e_curr)
+                if pulled_to_ema and rejected_red and candle_timestamp != getattr(self, "last_pullback_time", 0) and candle_timestamp != self.last_candle_time:
+                    self.last_pullback_time = candle_timestamp
+                    new_signal = {
+                        "signal": "BUY_PE",
+                        "spot": c_curr["close"],
+                        "candle_open": c_curr["open"],
+                        "candle_high": c_curr["high"],
+                        "candle_low": c_curr["low"],
+                        "candle_close": c_curr["close"],
+                        "candle_range": round(c_curr["high"] - c_curr["low"], 2),
+                        "timestamp": candle_timestamp,
+                        "is_reversal": False,
+                        "pullback_reentry": True
+                    }
+                    logger.info(f"⚡ [TREND PULLBACK] Bearish 20 EMA rejection re-entry detected @ {c_curr['close']}")
 
         self.last_position = pos_state
         latest_spot = candles_5m[-1]["close"]

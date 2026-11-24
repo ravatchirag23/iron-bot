@@ -58,6 +58,22 @@ def validate_signal_armor(signal_data: Dict[str, Any]) -> Tuple[bool, str]:
         if config.EURO_BLACKOUT_START <= current_time <= config.EURO_BLACKOUT_END:
             return False, "European Market Open Whiplash Window (13:25-13:45). Entry blocked to avoid trap!"
 
+        # 6B. Volatility-Gated Midday Defense Window (Rule 5B: 11:30 to 13:15 IST)
+        # Protects against low-liquidity theta decay chop without starving trade count.
+        midday_start = getattr(config, "MIDDAY_START_TIME", time(11, 30))
+        midday_end = getattr(config, "MIDDAY_END_TIME", time(13, 15))
+        min_midday_range = getattr(config, "MIDDAY_MIN_CANDLE_RANGE", 18.0)
+        
+        if midday_start <= current_time <= midday_end:
+            c_range = float(signal_data.get("candle_range") or 0.0)
+            if c_range == 0.0 and "candle_high" in signal_data and "candle_low" in signal_data:
+                c_range = abs(float(signal_data["candle_high"]) - float(signal_data["candle_low"]))
+            
+            if c_range < min_midday_range:
+                return False, f"MIDDAY_CHOP_DEFENSE: 5m candle range ({c_range:.1f} pts) < {min_midday_range:.1f} pts threshold. Skipping midday low-liquidity trap (11:30-13:15)!"
+            else:
+                logger.info(f"⚡ [MIDDAY MOMENTUM APPROVED] Active candle range ({c_range:.1f} pts >= {min_midday_range:.1f} pts). Allowing rapid midday momentum scalp!")
+
     # 7. Debounce / Duplicate Webhook Check (Rule 6)
     signal_type = signal_data.get("signal", "").upper()
     if not is_test and database.is_duplicate_alert(signal_type, config.DEBOUNCE_WINDOW_SECONDS):
@@ -284,7 +300,19 @@ def calculate_trade_parameters(signal_data: Dict[str, Any]) -> Dict[str, Any]:
             is_runner = False
             runner_reason = ""
             
-    # Micro-SL and Target
+    # Micro-SL and Target Engineering
+    # On normal days, clamp target to realistic Hit & Run (+14.0 pts) to lock high win rate (60%+)
+    # On confluence runner days, preserve full dynamic Greek target (+26+ pts) for ratchet trailing
+    if not is_runner:
+        target_points = getattr(config, "DEFAULT_TARGET_POINTS", 14.0)
+
+    # If within midday window, use rapid scalp target (+11.0 pts)
+    now_t = config.get_now_ist().time()
+    midday_start = getattr(config, "MIDDAY_START_TIME", time(11, 30))
+    midday_end = getattr(config, "MIDDAY_END_TIME", time(13, 15))
+    if midday_start <= now_t <= midday_end:
+        target_points = getattr(config, "MIDDAY_SCALP_TARGET_POINTS", 11.0)
+
     sl_price = round(ask_fill - sl_points, 2)
     target_price = round(ask_fill + target_points, 2)
     

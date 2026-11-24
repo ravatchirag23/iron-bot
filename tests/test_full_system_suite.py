@@ -168,11 +168,40 @@ class TestIronArmorRulesValidation(unittest.TestCase):
         approved, reason = risk_manager.validate_signal_armor(signal_breakout)
         self.assertTrue(approved)
 
+    def test_volatility_gated_midday_defense(self):
+        # 12:15 PM IST (inside 11:30 to 13:15 window)
+        midday_time = datetime(2026, 11, 11, 12, 15, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+        neutral_macro = {"nifty": {"change": 0.0}}
+        with patch("config.get_now_ist", return_value=midday_time), patch("macro_radar.get_macro_sentiment", return_value=neutral_macro):
+            # Low volatility chop candle (range 12 pts < 18 pts) -> BLOCKED
+            chop_signal = {"signal": "BUY_CE", "spot": 25200.0, "candle_range": 12.0, "is_test": False}
+            approved, reason = risk_manager.validate_signal_armor(chop_signal)
+            self.assertFalse(approved)
+            self.assertIn("MIDDAY_CHOP_DEFENSE", reason)
+
+            # High momentum breakout candle (range 22 pts >= 18 pts) -> APPROVED
+            momentum_signal = {"signal": "BUY_CE", "spot": 25200.0, "candle_range": 22.0, "is_test": False}
+            approved, reason = risk_manager.validate_signal_armor(momentum_signal)
+            self.assertTrue(approved)
+
 
 class TestPaperTradingEngineLifecycle(unittest.TestCase):
     """Tests Trade Entry, Micro-SL, Target, Trailing Milestones, and Exits."""
+    @classmethod
+    def setUpClass(cls):
+        cls.tg_patcher = patch("telegram_notifier.send_telegram_alert", return_value=True)
+        cls.tg_patcher.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tg_patcher.stop()
+
     def setUp(self):
         database.reset_daily_limits("2026-11-98")
+        conn = database.get_connection()
+        conn.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
+        conn.commit()
+        conn.close()
         paper_engine.engine.sync_state()
 
     def test_entry_sl_target_and_trailing(self):
@@ -195,17 +224,51 @@ class TestPaperTradingEngineLifecycle(unittest.TestCase):
             trade_id = paper_engine.engine.process_entry(trade_params)
             self.assertIsNotNone(trade_id)
 
-            # 1. Price moves to 216 (+16 pts gain -> reaches Milestone 1: 1:1 RR Cost Lock)
-            paper_engine.engine.update_tick(216.0)
-            self.assertEqual(paper_engine.engine.milestone_reached, 1, "Milestone 1 must trigger at +15 pts gain")
+            # 1. Price moves to 208 (+8 pts gain -> reaches Stage 1: Soft Risk Buffer)
+            paper_engine.engine.update_tick(208.0)
+            self.assertEqual(paper_engine.engine.milestone_reached, 1, "Milestone 1 must trigger at +7.5 pts gain")
             active = database.get_active_trade()
-            self.assertEqual(active["sl_price"], 200.0, "SL must move to entry price (200.0) upon Milestone 1")
+            self.assertEqual(active["sl_price"], 194.0, "SL must move to entry - 6.0 pts (194.0) upon Milestone 1")
 
-            # 2. Price hits Target at 227.0
+            # 2. Price moves to 211.5 (+11.5 pts gain -> reaches Stage 2: True Cost Lock)
+            paper_engine.engine.update_tick(211.5)
+            self.assertEqual(paper_engine.engine.milestone_reached, 2, "Milestone 2 must trigger at +11.0 pts gain")
+            active = database.get_active_trade()
+            self.assertEqual(active["sl_price"], 200.0, "SL must move to entry (200.0) upon Milestone 2")
+
+            # 3. Price hits Target at 227.0
             exit_event = paper_engine.engine.update_tick(227.5)
             self.assertIsNotNone(exit_event)
             self.assertEqual(exit_event["reason"], "TARGET_HIT")
             self.assertGreater(exit_event["pnl_rupees"], 0.0)
+
+    def test_runner_trailing_target_extension(self):
+        mock_now = datetime(2026, 11, 11, 11, 0, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+        with patch("config.get_now_ist", return_value=mock_now), patch("config.get_today_ist", return_value="2026-11-98"):
+            trade_params = {
+                "signal_type": "BUY_CE",
+                "symbol": "NIFTY25250CE_RUNNER",
+                "spot_price": 25250.0,
+                "entry_price": 200.0,
+                "ltp_reference": 200.0,
+                "sl_price": 185.0,
+                "target_price": 214.0, # Initial target +14 pts
+                "quantity": 65,
+                "vix_regime": "TEST",
+                "is_runner": True, # Trend runner active
+                "runner_reason": "High confluence",
+                "delta": 0.50
+            }
+            trade_id = paper_engine.engine.process_entry(trade_params)
+            self.assertIsNotNone(trade_id)
+
+            # Price reaches initial target at 214.5
+            event = paper_engine.engine.update_tick(214.5)
+            # Instead of exiting, runner target must be extended by +10 pts and SL trailed!
+            self.assertEqual(event["status"], "ACTIVE")
+            active = database.get_active_trade()
+            self.assertEqual(active["target_price"], 224.0, "Target must extend to 224.0 (+10 pts)")
+            self.assertEqual(active["sl_price"], 211.0, "SL must trail to target - 3 pts (211.0)")
 
     def tearDown(self):
         database.reset_daily_limits("2026-11-98")
@@ -213,9 +276,23 @@ class TestPaperTradingEngineLifecycle(unittest.TestCase):
 
 class TestMultiTradeCycleAndLimits(unittest.TestCase):
     """Verifies that up to 4 trades can execute sequentially and 5th trade is locked."""
+    @classmethod
+    def setUpClass(cls):
+        cls.tg_patcher = patch("telegram_notifier.send_telegram_alert", return_value=True)
+        cls.tg_patcher.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tg_patcher.stop()
+
     def setUp(self):
         self.test_date = "2026-11-97"
         database.reset_daily_limits(self.test_date)
+        conn = database.get_connection()
+        conn.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
+        conn.commit()
+        conn.close()
+        paper_engine.engine.sync_state()
 
     def test_four_trades_lifecycle_and_fifth_lock(self):
         mock_now = datetime(2026, 11, 11, 10, 30, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
@@ -293,6 +370,53 @@ class TestMultiTradeCycleAndLimits(unittest.TestCase):
             self.assertFalse(approved)
             self.assertIn("LOCKED", reason)
         database.reset_daily_limits(loss_date)
+
+
+class TestTrendPullbackReentry(unittest.TestCase):
+    """Tests Trend Pullback Re-entry on 20 EMA bounce in dominant trend direction."""
+    def test_bullish_pullback_bounce_signal(self):
+        scanner = NativeMarketScanner()
+        candles = []
+        base_time = 1700000000
+        for i in range(25):
+            p = 25200.0 + (i * 0.5)
+            candles.append({
+                "time": base_time + (i * 300),
+                "open": p - 2.0,
+                "high": p + 4.0,
+                "low": p - 3.0,
+                "close": p
+            })
+        
+        pos, spot, sig = scanner.evaluate_ut_bot(candles)
+        self.assertEqual(pos, 1, "Dominant position state must be Bullish (1)")
+
+        pullback_time = base_time + (25 * 300)
+        bounce_time = base_time + (26 * 300)
+        
+        # Pullback touches 20 EMA (~25210)
+        candles.append({
+            "time": pullback_time,
+            "open": 25215.0,
+            "high": 25216.0,
+            "low": 25208.0,
+            "close": 25210.0
+        })
+        
+        # Bounce green above EMA
+        candles.append({
+            "time": bounce_time,
+            "open": 25210.0,
+            "high": 25225.0,
+            "low": 25209.0,
+            "close": 25222.0
+        })
+        
+        with patch("time.time", return_value=bounce_time + 295):
+            pos, spot, sig = scanner.evaluate_ut_bot(candles)
+            self.assertIsNotNone(sig, "Pullback bounce must generate a re-entry signal")
+            self.assertEqual(sig["signal"], "BUY_CE")
+            self.assertTrue(sig.get("pullback_reentry", False))
 
 
 if __name__ == "__main__":
