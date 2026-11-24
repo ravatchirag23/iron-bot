@@ -127,6 +127,26 @@
 
 ---
 
+## 📅 Session Log: 24-Nov-2026 (Raw Meat Adversarial Sanitation & EC2 Production Deployment)
+
+### 1. Adversarial "Raw Meat" Sanitation Audit
+- **Reversal Exit Price PnL Corruption Guardrail:** Intercepted spot index (> 5000) being passed to `force_exit` during indicator flips in `native_scanner.py` and `webhook_server.py`. Added `_resolve_option_exit_price` in `PaperTradingEngine` to resolve real option bid quotes or delta-adjusted estimates, preventing multi-lakh PnL ledger corruption.
+- **SQLite Concurrency & WAL Hardening (`database.py`):** Configured `PRAGMA journal_mode = WAL;`, `PRAGMA busy_timeout = 15000;`, and `PRAGMA synchronous = NORMAL;`. Added thread-safe `db_session()` context manager with auto-rollback on exception and guaranteed connection closure in `finally:`.
+- **Database B-Tree Indexes:** Created `idx_trades_status` on `trades(status)` and `idx_trades_date` on `trades(trade_date)` for sub-millisecond query execution.
+- **Paper Trading Engine Mutex:** Added `self.lock = threading.RLock()` to `PaperTradingEngine` wrapping `process_entry`, `update_tick`, and `force_exit` to prevent state desync across concurrent threads.
+- **NoneType & TypeError Resilience (`risk_manager.py`):** Sanitized candle wick calculations with `float(signal_data.get("candle_range") or 0.0)` and guarded null checks on `candle_high` and `candle_close`.
+- **ZeroDivisionError Protection:** Guarded wallet analytics against `initial_capital <= 0` and `duration_days <= 0`.
+- **Macro Radar Rate-Limiting & Write Throttling (`macro_radar.py`):** Increased TTL to 30.0s, throttled background worker to 30s intervals to eliminate Yahoo Finance HTTP 429 bans on EC2, and throttled SQLite writes for GIFT Nifty.
+- **Ephemeral Test Database Isolation:** Created `tests/__init__.py` pointing `IRON_BOT_DB_PATH` to `/tmp/iron_bot_unit_tests.db` and bypassing live Telegram HTTP calls during testing (`IRON_BOT_TEST_MODE = 1`). Prevents test suites from colliding with the active EC2 production daemon (`iron-bot.service`).
+
+### 2. Verification & Proof Before Ship
+- **Unit Testing:** Authored `tests/test_raw_meat_sanitation.py` covering all 6 sanitation attack vectors.
+- **Full Suite Regression:** **36/36 unit tests passed** locally and on AWS EC2 (`Ran 36 tests in 9.733s - OK`).
+- **Git Commit:** `261e799` pushed to `origin/main`.
+- **AWS EC2 Mumbai (`13.207.161.15`):** Deployed and restarted `iron-bot.service` (active running, PID 261986). Both Port 80 and Port 5001 returning HTTP 200 OK.
+
+---
+
 ## 🎯 Next Steps
 - Monitor live 30-day campaign progress on EC2 (`http://13.207.161.15:5001/status`).
 - Resume Track A (Python Core & Automation) daily drills.
