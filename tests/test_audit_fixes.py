@@ -22,6 +22,7 @@ class TestAuditFixes(unittest.TestCase):
         database.reset_daily_limits()
         conn = database.get_connection()
         cursor = conn.cursor()
+        cursor.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
         cursor.execute("DELETE FROM trades WHERE symbol LIKE '%AUDIT_FIX%'")
         conn.commit()
         conn.close()
@@ -30,6 +31,7 @@ class TestAuditFixes(unittest.TestCase):
     def tearDown(self):
         conn = database.get_connection()
         cursor = conn.cursor()
+        cursor.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
         cursor.execute("DELETE FROM trades WHERE symbol LIKE '%AUDIT_FIX%'")
         conn.commit()
         conn.close()
