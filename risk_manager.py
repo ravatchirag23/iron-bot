@@ -163,9 +163,15 @@ def calculate_dynamic_greek_brackets(entry_premium: float, delta: float = 0.50, 
     try:
         import macro_radar
         macro = macro_radar.get_macro_sentiment()
-        vix = float(macro.get("vix", {}).get("price", 15.0))
+        vix_obj = (macro or {}).get("vix") or {}
+        vix = float(vix_obj.get("price") or 15.0)
     except Exception:
         vix = 15.0
+
+    # Sanitize and clamp inputs against domain errors (negative or zero VIX/ATR/premium)
+    vix = max(8.0, min(35.0, vix))
+    entry_premium = max(10.0, float(entry_premium or 100.0))
+    spot_atr = max(5.0, float(spot_atr or 22.0))
 
     # 1. Spot Invalidation Distance (1.3x ATR scaled by VIX volatility)
     multiplier = getattr(config, "SPOT_NOISE_MULTIPLIER", 1.3)

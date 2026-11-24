@@ -5,11 +5,14 @@ Simulates order fills, tracks active position, moves trailing SL, and manages ex
 """
 
 import threading
+import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
 import config
 import database
 import telegram_notifier
+
+logger = logging.getLogger("IronBot.PaperEngine")
 
 class PaperTradingEngine:
     def __init__(self):
@@ -84,6 +87,11 @@ class PaperTradingEngine:
         3. Tiered Trailing Profit Locks
         """
         with self.lock:
+            # Reject garbage, zero, or negative ticks from disconnected brokers/glitched websockets
+            if current_price is None or current_price <= 0.0:
+                logger.warning(f"Rejected invalid/zero tick price: {current_price}")
+                return None
+
             self.sync_state()
             if not self.active_trade:
                 return None
@@ -193,6 +201,7 @@ class PaperTradingEngine:
                 new_sl = entry
                 if new_sl > sl:
                     self._update_sl(trade_id, new_sl)
+                    trade["sl_price"] = new_sl
                     sl = new_sl
                     self.milestone_reached = 2
                     tag = f"+{gain:.1f} pts (Cost Lock - Runner Active)" if is_runner else f"🔒 COST LOCK: +{gain:.1f} pts gain! SL locked at ₹{new_sl:.2f} (Risk-Free Ride)"
@@ -204,6 +213,7 @@ class PaperTradingEngine:
                 new_sl = round(entry - soft_buffer, 2)
                 if new_sl > sl:
                     self._update_sl(trade_id, new_sl)
+                    trade["sl_price"] = new_sl
                     sl = new_sl
                     self.milestone_reached = 1
                     tag = f"🛡️ SOFT RISK BUFFER: +{gain:.1f} pts gain! SL moved to ₹{new_sl:.2f} (Risk slashed 60%, 6 pt breathing room preserved)"
@@ -215,6 +225,8 @@ class PaperTradingEngine:
                 new_sl = round(entry + locked_pts, 2)
                 if new_sl > sl:
                     self._update_sl(trade_id, new_sl)
+                    trade["sl_price"] = new_sl
+                    sl = new_sl
                     self.milestone_reached = 3
                     tag = f"🏃 RUNNER: Giant Momentum! Locked +{locked_pts} pts profit @ ₹{new_sl:.2f}"
                     telegram_notifier.notify_trailing_update(symbol, tag, new_sl, locked_pts * qty)
@@ -225,6 +237,8 @@ class PaperTradingEngine:
                 dynamic_sl = round(current_price - offset, 2)
                 if dynamic_sl > (sl + 2.0): # Step up whenever price moves 2+ pts higher
                     self._update_sl(trade_id, dynamic_sl)
+                    trade["sl_price"] = dynamic_sl
+                    sl = dynamic_sl
                     telegram_notifier.notify_trailing_update(
                         symbol, 
                         f"🌊 RUNNER SURFING: +{gain:.1f} pts! Trailing SL raised to ₹{dynamic_sl:.2f}", 
@@ -287,9 +301,9 @@ class PaperTradingEngine:
             entry = float(trade["entry_price"])
             qty = int(trade["quantity"])
 
-            # Sanity Guardrail: If exit_price is accidentally passed as spot price (> 5000)
-            # or omitted, automatically resolve real option quote or delta estimate!
-            if exit_price is None or exit_price > 5000.0:
+            # Sanity Guardrail: If exit_price is accidentally passed as spot price (> 5000),
+            # non-positive (<= 0), or omitted, automatically resolve real option quote or delta estimate!
+            if exit_price is None or exit_price > 5000.0 or exit_price <= 0.0:
                 exit_price = self._resolve_option_exit_price(trade, fallback_spot=exit_price)
                 
             exit_price = round(exit_price, 2)

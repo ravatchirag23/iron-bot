@@ -178,6 +178,91 @@ class TestRawMeatSanitation(unittest.TestCase):
             self.assertIn("extended to ₹224.00", tag_msg)
         print(f"\n✅ [SANITATION TEST 6 PASSED] Runner extension report accurately logs previous hit target and new target: '{tag_msg}'")
 
+    def test_zero_and_negative_tick_rejected_no_false_sl(self):
+        """
+        BACTERIA 7 AUDIT:
+        Verify that a zero (0.0) or negative (-10.0) tick from a disconnected broker feed
+        is instantly rejected and does NOT falsely trigger a stop-loss liquidation.
+        """
+        trade_data = {
+            "signal_type": "BUY_CE",
+            "symbol": "NIFTY25200CE (ZERO_TICK_TEST)",
+            "spot_price": 25200.0,
+            "entry_price": 200.0,
+            "sl_price": 186.0,
+            "target_price": 224.0,
+            "quantity": 65,
+            "is_runner": 0
+        }
+        trade_id = paper_engine.engine.process_entry(trade_data)
+        
+        # Feed 0.0 tick - must be rejected with None
+        res_zero = paper_engine.engine.update_tick(0.0)
+        self.assertIsNone(res_zero)
+        
+        # Feed -5.5 tick - must be rejected with None
+        res_neg = paper_engine.engine.update_tick(-5.5)
+        self.assertIsNone(res_neg)
+        
+        # Verify trade is STILL ACTIVE in database and was NOT stopped out!
+        active = database.get_active_trade()
+        self.assertIsNotNone(active)
+        self.assertEqual(active["id"], trade_id)
+        self.assertEqual(active["status"], "ACTIVE")
+        print("\n✅ [SANITATION TEST 7 PASSED] Zero and negative broker ticks safely rejected without triggering false SL!")
+
+    def test_option_chain_null_ce_pe_resilience(self):
+        """
+        BACTERIA 8 AUDIT:
+        Verify option_chain_shield handles null CE/PE records without raising AttributeError.
+        """
+        mock_snapshot = {
+            "spot": 25050.0,
+            "atm_strike": 25050,
+            "strikes": {
+                25050: {
+                    "CE": None, # Malformed / null
+                    "PE": {"lastPrice": None, "askPrice": None, "bidprice": None, "delta": None}
+                }
+            },
+            "expiry": "Weekly",
+            "ce_ltp": None,
+            "pe_ltp": None,
+            "pcr": None
+        }
+        
+        with patch("option_chain_shield.get_oi_snapshot", return_value=mock_snapshot):
+            # Test quote by strike
+            quote_ce = option_chain_shield.get_option_quote_by_strike(25050, is_call=True)
+            self.assertEqual(quote_ce["ltp"], 0.0)
+            self.assertEqual(quote_ce["delta"], 0.50)
+            
+            quote_pe = option_chain_shield.get_option_quote_by_strike(25050, is_call=False)
+            self.assertEqual(quote_pe["ltp"], 0.0)
+            self.assertEqual(quote_pe["delta"], -0.50)
+            
+            # Test ATM quote
+            atm_quote = option_chain_shield.get_real_option_quote(25050.0, is_call=True)
+            self.assertEqual(atm_quote["ltp"], 0.0)
+            self.assertEqual(atm_quote["delta"], 0.50)
+        print("\n✅ [SANITATION TEST 8 PASSED] Option chain shield handles null CE/PE and null fields with zero crashes!")
+
+    def test_negative_and_zero_vix_math_domain_resilience(self):
+        """
+        BACTERIA 9 AUDIT:
+        Verify calculate_dynamic_greek_brackets does not crash with ValueError when VIX is <= 0.
+        """
+        with patch("macro_radar.get_macro_sentiment", return_value={"vix": {"price": -5.0}}):
+            sl_pts, tp_pts, regime = risk_manager.calculate_dynamic_greek_brackets(
+                entry_premium=0.0, # Zero premium fallback test
+                delta=0.50,
+                spot_atr=0.0       # Zero ATR fallback test
+            )
+            self.assertGreater(sl_pts, 0.0)
+            self.assertGreater(tp_pts, 0.0)
+            self.assertIn("GREEK_DYNAMIC", regime)
+        print(f"\n✅ [SANITATION TEST 9 PASSED] Negative VIX and zero ATR safely clamped (SL: {sl_pts} pts | TP: {tp_pts} pts)!")
+
 
 if __name__ == "__main__":
     unittest.main()

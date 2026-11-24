@@ -50,8 +50,8 @@ def fetch_live_nse_option_chain() -> Optional[Dict[str, Any]]:
             
         atm_strike = round(underlying / 50.0) * 50
         
-        total_call_oi = sum(r.get("CE", {}).get("openInterest", 0) for r in expiry_data)
-        total_put_oi = sum(r.get("PE", {}).get("openInterest", 0) for r in expiry_data)
+        total_call_oi = sum(((r.get("CE") or {}).get("openInterest") or 0) for r in expiry_data)
+        total_put_oi = sum(((r.get("PE") or {}).get("openInterest") or 0) for r in expiry_data)
         pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi > 0 else 1.0
         
         # Local walls (within +/- 500 pts of ATM to capture actionable institutional defense)
@@ -62,16 +62,16 @@ def fetch_live_nse_option_chain() -> Optional[Dict[str, Any]]:
         call_recs = [r for r in near_records if r.get("strikePrice", 0) >= atm_strike]
         put_recs = [r for r in near_records if r.get("strikePrice", 0) <= atm_strike]
         
-        call_wall_rec = max(call_recs, key=lambda r: r.get("CE", {}).get("openInterest", 0)) if call_recs else near_records[0]
-        put_wall_rec = max(put_recs, key=lambda r: r.get("PE", {}).get("openInterest", 0)) if put_recs else near_records[0]
+        call_wall_rec = max(call_recs, key=lambda r: ((r.get("CE") or {}).get("openInterest") or 0)) if call_recs else near_records[0]
+        put_wall_rec = max(put_recs, key=lambda r: ((r.get("PE") or {}).get("openInterest") or 0)) if put_recs else near_records[0]
         
         # ATM record
         atm_rec = next((r for r in expiry_data if r.get("strikePrice") == atm_strike), None)
-        ce_info = atm_rec.get("CE", {}) if atm_rec else {}
-        pe_info = atm_rec.get("PE", {}) if atm_rec else {}
+        ce_info = (atm_rec.get("CE") or {}) if atm_rec else {}
+        pe_info = (atm_rec.get("PE") or {}) if atm_rec else {}
         
-        ce_ltp = float(ce_info.get("lastPrice", 0.0))
-        pe_ltp = float(pe_info.get("lastPrice", 0.0))
+        ce_ltp = float(ce_info.get("lastPrice") or 0.0)
+        pe_ltp = float(pe_info.get("lastPrice") or 0.0)
         
         # Build full strike-level lookup table for exact active position monitoring
         strikes_map = {}
@@ -79,8 +79,8 @@ def fetch_live_nse_option_chain() -> Optional[Dict[str, Any]]:
             sp = int(r.get("strikePrice", 0))
             if sp > 0:
                 strikes_map[sp] = {
-                    "CE": r.get("CE", {}),
-                    "PE": r.get("PE", {})
+                    "CE": r.get("CE") or {},
+                    "PE": r.get("PE") or {}
                 }
 
         return {
@@ -94,14 +94,14 @@ def fetch_live_nse_option_chain() -> Optional[Dict[str, Any]]:
             "ce_bid": float(ce_info.get("bidprice") or max(1.0, ce_ltp - 0.6)),
             "pe_ask": float(pe_info.get("askPrice") or (pe_ltp + 0.6)),
             "pe_bid": float(pe_info.get("bidprice") or max(1.0, pe_ltp - 0.6)),
-            "ce_delta": float(ce_info.get("delta", 0.50)),
-            "pe_delta": float(pe_info.get("delta", -0.50)),
-            "ce_iv": float(ce_info.get("impliedVolatility", 15.0)),
-            "pe_iv": float(pe_info.get("impliedVolatility", 15.0)),
+            "ce_delta": float(ce_info.get("delta") or 0.50),
+            "pe_delta": float(pe_info.get("delta") or -0.50),
+            "ce_iv": float(ce_info.get("impliedVolatility") or 15.0),
+            "pe_iv": float(pe_info.get("impliedVolatility") or 15.0),
             "call_wall_resistance": int(call_wall_rec.get("strikePrice", atm_strike + 150)),
             "put_wall_support": int(put_wall_rec.get("strikePrice", atm_strike - 150)),
-            "call_wall_oi": int(call_wall_rec.get("CE", {}).get("openInterest", 0)),
-            "put_wall_oi": int(put_wall_rec.get("PE", {}).get("openInterest", 0)),
+            "call_wall_oi": int(((call_wall_rec.get("CE") or {}).get("openInterest") or 0)),
+            "put_wall_oi": int(((put_wall_rec.get("PE") or {}).get("openInterest") or 0)),
             "total_call_oi": total_call_oi,
             "total_put_oi": total_put_oi,
             "pcr": pcr,
@@ -123,11 +123,11 @@ def get_option_quote_by_strike(target_strike: int, is_call: bool, spot_price: fl
     
     if target_strike in strikes_map:
         side_key = "CE" if is_call else "PE"
-        info = strikes_map[target_strike].get(side_key, {})
-        ltp = float(info.get("lastPrice", 0.0))
+        info = (strikes_map[target_strike].get(side_key) or {})
+        ltp = float(info.get("lastPrice") or 0.0)
         ask = float(info.get("askPrice") or (ltp + 0.6))
         bid = float(info.get("bidprice") or max(1.0, ltp - 0.6))
-        delta = float(info.get("delta", 0.50 if is_call else -0.50))
+        delta = float(info.get("delta") or (0.50 if is_call else -0.50))
         return {
             "strike": target_strike,
             "symbol": f"NIFTY{target_strike}{'CE' if is_call else 'PE'}",
@@ -163,15 +163,15 @@ def get_real_option_quote(spot_price: float, is_call: bool) -> Dict[str, Any]:
     expiry = snapshot.get("expiry", "Weekly")
     
     if is_call:
-        ltp = snapshot.get("ce_ltp", 0.0)
-        ask = snapshot.get("ce_ask", ltp + 0.6)
-        bid = snapshot.get("ce_bid", max(1.0, ltp - 0.6))
-        delta = snapshot.get("ce_delta", 0.50)
+        ltp = float(snapshot.get("ce_ltp") or 0.0)
+        ask = float(snapshot.get("ce_ask") or (ltp + 0.6))
+        bid = float(snapshot.get("ce_bid") or max(1.0, ltp - 0.6))
+        delta = float(snapshot.get("ce_delta") or 0.50)
     else:
-        ltp = snapshot.get("pe_ltp", 0.0)
-        ask = snapshot.get("pe_ask", ltp + 0.6)
-        bid = snapshot.get("pe_bid", max(1.0, ltp - 0.6))
-        delta = snapshot.get("pe_delta", -0.50)
+        ltp = float(snapshot.get("pe_ltp") or 0.0)
+        ask = float(snapshot.get("pe_ask") or (ltp + 0.6))
+        bid = float(snapshot.get("pe_bid") or max(1.0, ltp - 0.6))
+        delta = float(snapshot.get("pe_delta") or -0.50)
         
     return {
         "strike": strike,

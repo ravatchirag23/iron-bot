@@ -143,9 +143,10 @@ def get_live_dashboard_state() -> Dict[str, Any]:
     # 7. Dynamic Greeks Parameters Breakdown
     vix = 13.5
     try:
-        vix = float(macro_data.get("vix", {}).get("price") or 13.5)
+        vix = float(((macro_data or {}).get("vix") or {}).get("price") or 13.5)
     except Exception:
         pass
+    vix = max(8.0, min(35.0, vix))
     spot_atr = 22.0
     breathing_room = round(1.3 * spot_atr * (max(8.0, vix) / 15.0)**0.5, 1)
     calc_sl = round(0.50 * breathing_room + 0.6, 1)
@@ -169,9 +170,9 @@ def get_live_dashboard_state() -> Dict[str, Any]:
         sys_state_desc = "Market Closed (Awaiting 09:30 AM)"
 
     # 8B. Institutional Conviction Meter (0 to 100) — Ported from Dashboard-Clone
-    raw_macro = int(macro_data.get("score", 0))  # -50 to +50
+    raw_macro = int((macro_data or {}).get("score") or 0)  # -50 to +50
     macro_component = max(0, min(40, int((abs(raw_macro) / 50.0) * 40)))
-    pcr_val = float(oi_data.get("pcr", 1.0))
+    pcr_val = float((oi_data or {}).get("pcr") or 1.0)
     pcr_component = 30 if (pcr_val >= 1.15 or pcr_val <= 0.85) else 18
     vix_component = 30 if (11.0 <= vix <= 16.5) else (20 if vix < 20.0 else 10)
     total_conviction = min(100, max(20, macro_component + pcr_component + vix_component))

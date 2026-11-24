@@ -165,7 +165,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
             "spot": spot_price,
             "entry_price": entry_price,
             "candle_low": payload.get("candle_low"),
-            "candle_range": float(payload.get("candle_range", 15.0)),
+            "candle_range": float(payload.get("candle_range") or 15.0),
             "is_test": payload.get("is_test", False)
         }
         

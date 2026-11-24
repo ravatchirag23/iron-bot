@@ -66,16 +66,18 @@ class NativeMarketScanner:
             with urllib.request.urlopen(req, context=_ssl_ctx, timeout=6) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
 
-            res = data.get("chart", {}).get("result", [{}])[0]
+            chart_res = (data.get("chart") or {}).get("result") or [{}]
+            res = chart_res[0] if chart_res else {}
             times = res.get("timestamp")
             if not times:
                 logger.warning("[SCANNER] No timestamp data returned by chart API")
                 return []
-            q = res.get("indicators", {}).get("quote", [{}])[0]
-            opens = q.get("open", [])
-            highs = q.get("high", [])
-            lows = q.get("low", [])
-            closes = q.get("close", [])
+            quotes_list = ((res.get("indicators") or {}).get("quote") or [{}])
+            q = quotes_list[0] if quotes_list else {}
+            opens = q.get("open") or []
+            highs = q.get("high") or []
+            lows = q.get("low") or []
+            closes = q.get("close") or []
 
             candles = []
             for i in range(len(times)):
