@@ -15,6 +15,8 @@ import time
 import os
 import tempfile
 import sqlite3
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from unittest.mock import patch
 
 os.environ["IRON_BOT_TEST_MODE"] = "1"
@@ -32,6 +34,7 @@ import option_chain_shield
 class TestRawMeatSanitation(unittest.TestCase):
     def setUp(self):
         # Enforce strict test isolation on trades and tracker
+        database.reset_daily_limits()
         conn = database.get_connection()
         conn.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
         conn.commit()
@@ -43,6 +46,7 @@ class TestRawMeatSanitation(unittest.TestCase):
         conn.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
         conn.commit()
         conn.close()
+        database.reset_daily_limits()
         paper_engine.engine.sync_state()
 
     def test_spot_as_option_exit_price_interception(self):
@@ -160,27 +164,29 @@ class TestRawMeatSanitation(unittest.TestCase):
         BACTERIA 6 AUDIT:
         Verify that runner target extension notifies with the previous target hit and the new target.
         """
-        trade_data = {
-            "signal_type": "BUY_CE",
-            "symbol": "NIFTY25200CE (RUNNER_TEST)",
-            "spot_price": 25200.0,
-            "entry_price": 200.0,
-            "sl_price": 186.0,
-            "target_price": 214.0,
-            "quantity": 65,
-            "is_runner": 1
-        }
-        _ = paper_engine.engine.process_entry(trade_data)
-        
-        # When price reaches 214.0, target extends by +10.0 to 224.0
-        with patch("telegram_notifier.notify_trailing_update") as mock_tg:
-            res = paper_engine.engine.update_tick(214.0)
-            self.assertEqual(res["status"], "ACTIVE")
-            self.assertTrue(mock_tg.called)
-            args, _ = mock_tg.call_args
-            tag_msg = args[1]
-            self.assertIn("Hit ₹214.00", tag_msg)
-            self.assertIn("extended to ₹224.00", tag_msg)
+        mock_now_1030 = datetime(2026, 11, 25, 10, 30, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+        with patch("config.get_now_ist", return_value=mock_now_1030):
+            trade_data = {
+                "signal_type": "BUY_CE",
+                "symbol": "NIFTY25200CE (RUNNER_TEST)",
+                "spot_price": 25200.0,
+                "entry_price": 200.0,
+                "sl_price": 186.0,
+                "target_price": 214.0,
+                "quantity": 65,
+                "is_runner": 1
+            }
+            _ = paper_engine.engine.process_entry(trade_data)
+            
+            # When price reaches 214.0, target extends by +10.0 to 224.0
+            with patch("telegram_notifier.notify_trailing_update") as mock_tg:
+                res = paper_engine.engine.update_tick(214.0)
+                self.assertEqual(res["status"], "ACTIVE")
+                self.assertTrue(mock_tg.called)
+                args, _ = mock_tg.call_args
+                tag_msg = args[1]
+                self.assertIn("Hit ₹214.00", tag_msg)
+                self.assertIn("extended to ₹224.00", tag_msg)
         print(f"\n✅ [SANITATION TEST 6 PASSED] Runner extension report accurately logs previous hit target and new target: '{tag_msg}'")
 
     def test_zero_and_negative_tick_rejected_no_false_sl(self):

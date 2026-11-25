@@ -19,6 +19,7 @@ class TestWalletCampaign(unittest.TestCase):
 
     def setUp(self):
         database.init_db()
+        database.reset_daily_limits()
         conn = database.get_connection()
         conn.cursor().execute("DELETE FROM trades WHERE symbol LIKE '%WALLET%' OR symbol = 'NIFTY25200CE' OR trade_date >= '2099-01-01'")
         conn.cursor().execute(f"DELETE FROM daily_tracker WHERE trade_date = '{self.TEST_START_DATE}'")
@@ -35,6 +36,7 @@ class TestWalletCampaign(unittest.TestCase):
         conn.close()
         # Restore actual campaign start date
         database.init_campaign_wallet(initial_capital=50000.0, start_date="2026-11-15")
+        database.reset_daily_limits()
 
     def test_initial_wallet_baseline(self):
         """Verify wallet starts with exact ₹50,000 cap and 0.0% ROI."""

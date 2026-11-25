@@ -258,6 +258,10 @@ def get_simulated_live_oi_structure(spot_price: float = 25050.0) -> Dict[str, An
 
 def get_oi_snapshot(spot_price: float = 25050.0) -> Dict[str, Any]:
     """Returns cached or fresh Option Chain snapshot. Zero-failure guaranteed."""
+    import os
+    if os.environ.get("IRON_BOT_TEST_MODE") == "1":
+        return get_simulated_live_oi_structure(spot_price)
+
     global _cached_data, _last_fetch_time
     now = time.time()
     

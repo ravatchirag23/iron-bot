@@ -256,6 +256,22 @@ def get_macro_sentiment(force: bool = False) -> Dict[str, Any]:
     - India VIX (^INDIAVIX)
     - NIFTY 50 Spot (^NSEI)
     """
+    import os
+    if os.environ.get("IRON_BOT_TEST_MODE") == "1":
+        return {
+            "score": 0,
+            "sentiment": "NEUTRAL",
+            "reason": "Test Mode Mock",
+            "gift_nifty": {"price": 25200.0, "change_pct": 0.0},
+            "dow": {"price": 44000.0, "change_pct": 0.0},
+            "nasdaq": {"price": 19000.0, "change_pct": 0.0},
+            "crude": {"price": 75.0, "change_pct": 0.0},
+            "usdinr": {"price": 84.5, "change_pct": 0.0},
+            "vix": {"price": 14.5, "change_pct": 0.0},
+            "nifty": {"price": 25200.0, "change_pct": 0.0},
+            "factors": ["Test Mode Active"]
+        }
+
     global _cached_macro, _last_macro_time
     import time
     now = time.time()
