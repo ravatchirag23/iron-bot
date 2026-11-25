@@ -83,8 +83,8 @@ class WebhookHandler(BaseHTTPRequestHandler):
         elif self.path == "/trades":
             trades = database.get_all_trades(50)
             self._send_json(200, {"trades": trades})
-        elif self.path == "/test_telegram":
-            ok = telegram_notifier.send_telegram_alert("🚀 *IRON BOT:* Live Telegram Connection Verified on Render Cloud!")
+        elif self.path in ("/test_telegram", "/api/test_telegram"):
+            ok = telegram_notifier.send_telegram_alert("🚀 *IRON BOT:* Live Telegram Connection Verified on AWS Cloud (Sydney)!")
             self._send_json(200, {"telegram_sent": ok})
         elif self.path == "/macro":
             data = macro_radar.get_macro_sentiment()
@@ -124,6 +124,13 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self.handle_reset()
         elif self.path == "/reset_wallet":
             self.handle_reset_wallet()
+        elif self.path in ("/test_telegram", "/api/test_telegram"):
+            ok = telegram_notifier.send_telegram_alert("🚀 *IRON BOT:* Live Telegram Connection Verified on AWS Cloud (Sydney)!")
+            self._send_json(200, {"telegram_sent": ok})
+        elif self.path in ("/api/refresh_macro", "/api/macro_refresh"):
+            import macro_radar
+            macro_radar.get_macro_sentiment(force=True)
+            self._send_json(200, {"status": "SUCCESS", "message": "Macro radar cache refreshed"})
         elif self.path == "/update_token":
             self.handle_update_token_post(post_data)
         else:
