@@ -284,11 +284,11 @@ def get_wallet_stats() -> Dict[str, Any]:
     Computes strict ₹50,000 INR Wallet & 30-Day Campaign Performance Metrics.
     Tracks starting seed capital, current equity, available margin, ROI %, and circuit breakers.
     """
-    start_date_str = get_config("campaign_start_date", getattr(config, "CAMPAIGN_START_DATE", "2026-11-15"))
-    initial_capital = float(get_config("initial_wallet_capital", str(getattr(config, "INITIAL_WALLET_CAPITAL", 50000.0))))
+    start_date_str = get_config("campaign_start_date", getattr(config, "CAMPAIGN_START_DATE", "2026-11-25"))
+    initial_capital = float(get_config("initial_wallet_capital", str(getattr(config, "INITIAL_WALLET_CAPITAL", 100000.0))))
     duration_days = int(getattr(config, "CAMPAIGN_DURATION_DAYS", 30))
     target_roi_pct = float(getattr(config, "TARGET_ROI_PCT", 20.0))
-    preservation_floor = float(getattr(config, "CAPITAL_PRESERVATION_FLOOR", 35000.0))
+    preservation_floor = float(get_config("preservation_floor", str(round(initial_capital * 0.70, 2))))
     
     # Calculate Day N of 30
     try:
@@ -355,7 +355,7 @@ def get_wallet_stats() -> Dict[str, Any]:
         
     conn.close()
     
-    safe_initial_capital = initial_capital if initial_capital > 0 else 50000.0
+    safe_initial_capital = initial_capital if initial_capital > 0 else 100000.0
     safe_duration_days = max(1, duration_days)
     
     current_balance = round(initial_capital + realized_pnl, 2)
@@ -375,7 +375,7 @@ def get_wallet_stats() -> Dict[str, Any]:
     timeline_pct = min(100, max(0, int((day_number / safe_duration_days) * 100)))
 
     return {
-        "campaign_name": "30-Day ₹50K Alpha Campaign",
+        "campaign_name": "30-Day ₹1 Lakh Alpha Campaign",
         "start_date": start_date_str,
         "day_number": day_number,
         "total_days": duration_days,
@@ -403,12 +403,13 @@ def get_wallet_stats() -> Dict[str, Any]:
         "is_preservation_triggered": is_preservation_triggered
     }
 
-def init_campaign_wallet(initial_capital: float = 50000.0, start_date: Optional[str] = None):
-    """Initializes or resets the 30-Day ₹50,000 Campaign starting ledger."""
+def init_campaign_wallet(initial_capital: float = 100000.0, start_date: Optional[str] = None):
+    """Initializes or resets the 30-Day Campaign starting ledger."""
     if not start_date:
         start_date = config.get_today_ist()
     set_config("initial_wallet_capital", str(float(initial_capital)))
     set_config("campaign_start_date", start_date)
+    set_config("preservation_floor", str(round(float(initial_capital) * 0.70, 2)))
     log_event("CAMPAIGN_INITIALIZED", f"30-Day Campaign started on {start_date} with ₹{initial_capital:,.2f} wallet cap")
 
 # Initialize tables when module is imported

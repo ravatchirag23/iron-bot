@@ -5,3 +5,4 @@ iron_bot.log
 deploy_aws_ec2.py
 deploy_new_aws.py
 venv/
+*.bak*

@@ -287,23 +287,31 @@ def render_dashboard_html() -> str:
     <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
     <style>
         :root {
-            --bg-base: #080c14;
-            --bg-surface: #0e1524;
-            --bg-card: rgba(18, 27, 46, 0.7);
-            --bg-card-hover: rgba(24, 36, 61, 0.85);
-            --border: rgba(255, 255, 255, 0.08);
-            --border-highlight: rgba(56, 189, 248, 0.25);
-            --text-primary: #f8fafc;
+            --bg-base: #040711;
+            --bg-surface: #090e1f;
+            --bg-card: rgba(10, 16, 32, 0.82);
+            --bg-card-hover: rgba(16, 26, 52, 0.94);
+            --border: rgba(0, 240, 255, 0.16);
+            --border-highlight: rgba(0, 240, 255, 0.5);
+            --border-glow: 0 0 16px rgba(0, 240, 255, 0.28);
+            --text-primary: #ffffff;
             --text-secondary: #94a3b8;
-            --text-muted: #64748b;
-            --green: #10b981;
-            --green-glow: rgba(16, 185, 129, 0.25);
-            --red: #ef4444;
-            --red-glow: rgba(239, 68, 68, 0.25);
-            --blue: #38bdf8;
-            --purple: #a855f7;
-            --amber: #f59e0b;
-            --cyan: #06b6d4;
+            --text-muted: #5e718d;
+
+            /* Vivid Cyberpunk Neon Palette */
+            --green: #00ff88;
+            --green-glow: 0 0 16px rgba(0, 255, 136, 0.5);
+            --red: #ff2a6d;
+            --red-glow: 0 0 16px rgba(255, 42, 109, 0.5);
+            --blue: #00c8ff;
+            --blue-glow: 0 0 16px rgba(0, 200, 255, 0.45);
+            --purple: #bf00ff;
+            --purple-glow: 0 0 18px rgba(191, 0, 255, 0.48);
+            --amber: #ffaa00;
+            --amber-glow: 0 0 16px rgba(255, 170, 0, 0.5);
+            --cyan: #00f0ff;
+            --cyan-glow: 0 0 18px rgba(0, 240, 255, 0.5);
+            --yellow: #ffd600;
             --font-main: 'Plus Jakarta Sans', -apple-system, sans-serif;
             --font-mono: 'JetBrains Mono', monospace;
         }
@@ -316,19 +324,23 @@ def render_dashboard_html() -> str:
             min-height: 100vh;
             padding: 20px;
             background-image: 
-                radial-gradient(circle at 15% 15%, rgba(56, 189, 248, 0.04) 0%, transparent 40%),
-                radial-gradient(circle at 85% 85%, rgba(168, 85, 247, 0.04) 0%, transparent 40%);
+                radial-gradient(circle at 10% 8%, rgba(0, 240, 255, 0.08) 0%, transparent 42%),
+                radial-gradient(circle at 90% 92%, rgba(191, 0, 255, 0.08) 0%, transparent 45%),
+                radial-gradient(circle at 50% 50%, rgba(0, 255, 136, 0.03) 0%, transparent 60%),
+                linear-gradient(rgba(0, 240, 255, 0.025) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 240, 255, 0.025) 1px, transparent 1px);
+            background-size: 100% 100%, 100% 100%, 100% 100%, 48px 48px, 48px 48px;
         }
 
         .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
         /* Dynamic Tick Flash Animations */
         @keyframes flashGreen {
-            0% { background: rgba(16, 185, 129, 0.4); color: #fff; transform: scale(1.02); }
+            0% { background: rgba(0, 255, 136, 0.5); color: #fff; box-shadow: 0 0 24px rgba(0, 255, 136, 0.8); transform: scale(1.02); }
             100% { background: transparent; transform: scale(1); }
         }
         @keyframes flashRed {
-            0% { background: rgba(239, 68, 68, 0.4); color: #fff; transform: scale(1.02); }
+            0% { background: rgba(255, 42, 109, 0.5); color: #fff; box-shadow: 0 0 24px rgba(255, 42, 109, 0.8); transform: scale(1.02); }
             100% { background: transparent; transform: scale(1); }
         }
         .flash-green { animation: flashGreen 0.75s ease-out; }
@@ -340,11 +352,12 @@ def render_dashboard_html() -> str:
             justify-content: space-between;
             align-items: center;
             background: var(--bg-card);
-            backdrop-filter: blur(16px);
+            backdrop-filter: blur(20px);
             border: 1px solid var(--border);
             padding: 14px 24px;
             border-radius: 14px;
             margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(0, 240, 255, 0.2);
         }
         .brand {
             display: flex;
@@ -352,37 +365,38 @@ def render_dashboard_html() -> str:
             gap: 12px;
         }
         .brand-logo {
-            width: 36px;
-            height: 36px;
-            background: linear-gradient(135deg, #38bdf8, #818cf8);
-            border-radius: 9px;
+            width: 38px;
+            height: 38px;
+            background: linear-gradient(135deg, #00f0ff, #bf00ff);
+            border-radius: 10px;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 800;
-            font-size: 18px;
-            color: #0b0f19;
-            box-shadow: 0 0 16px rgba(56, 189, 248, 0.4);
+            font-size: 20px;
+            color: #040711;
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.65), 0 0 40px rgba(191, 0, 255, 0.35);
         }
         .brand-name {
-            font-size: 18px;
+            font-size: 19px;
             font-weight: 800;
             letter-spacing: -0.5px;
             display: flex;
             align-items: center;
             gap: 8px;
+            text-shadow: 0 0 12px rgba(255, 255, 255, 0.2);
         }
         .live-dot {
-            width: 8px;
-            height: 8px;
+            width: 9px;
+            height: 9px;
             background: var(--green);
             border-radius: 50%;
-            box-shadow: 0 0 8px var(--green);
+            box-shadow: 0 0 12px var(--green), 0 0 24px var(--green);
             animation: pulse 1.8s infinite;
         }
         @keyframes pulse {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.4; transform: scale(1.3); }
+            0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 12px var(--green), 0 0 24px var(--green); }
+            50% { opacity: 0.5; transform: scale(1.35); box-shadow: 0 0 20px var(--green), 0 0 35px var(--green); }
         }
         .nav-meta {
             display: flex;
@@ -390,7 +404,7 @@ def render_dashboard_html() -> str:
             gap: 14px;
         }
         .pill {
-            background: rgba(255, 255, 255, 0.04);
+            background: rgba(10, 16, 32, 0.6);
             border: 1px solid var(--border);
             padding: 6px 12px;
             border-radius: 20px;
@@ -399,17 +413,57 @@ def render_dashboard_html() -> str:
             display: flex;
             align-items: center;
             gap: 6px;
+            transition: all 0.2s ease;
         }
-        .pill-green { background: rgba(16, 185, 129, 0.12); border-color: rgba(16, 185, 129, 0.3); color: var(--green); }
-        .pill-blue { background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.3); color: var(--blue); }
-        .pill-red { background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.3); color: var(--red); }
-        .pill-amber { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.3); color: var(--amber); }
-        .pill-purple { background: rgba(168, 85, 247, 0.12); border-color: rgba(168, 85, 247, 0.3); color: var(--purple); }
+        .pill-green { 
+            background: rgba(0, 255, 136, 0.12); 
+            border-color: rgba(0, 255, 136, 0.45); 
+            color: var(--green); 
+            text-shadow: 0 0 8px rgba(0, 255, 136, 0.5);
+            box-shadow: 0 0 12px rgba(0, 255, 136, 0.18);
+        }
+        .pill-blue { 
+            background: rgba(0, 200, 255, 0.12); 
+            border-color: rgba(0, 200, 255, 0.45); 
+            color: var(--blue); 
+            text-shadow: 0 0 8px rgba(0, 200, 255, 0.5);
+            box-shadow: 0 0 12px rgba(0, 200, 255, 0.18);
+        }
+        .pill-red { 
+            background: rgba(255, 42, 109, 0.12); 
+            border-color: rgba(255, 42, 109, 0.45); 
+            color: var(--red); 
+            text-shadow: 0 0 8px rgba(255, 42, 109, 0.5);
+            box-shadow: 0 0 12px rgba(255, 42, 109, 0.18);
+        }
+        .pill-amber { 
+            background: rgba(255, 170, 0, 0.12); 
+            border-color: rgba(255, 170, 0, 0.45); 
+            color: var(--amber); 
+            text-shadow: 0 0 8px rgba(255, 170, 0, 0.5);
+            box-shadow: 0 0 12px rgba(255, 170, 0, 0.18);
+        }
+        .pill-purple { 
+            background: rgba(191, 0, 255, 0.12); 
+            border-color: rgba(191, 0, 255, 0.45); 
+            color: var(--purple); 
+            text-shadow: 0 0 8px rgba(191, 0, 255, 0.5);
+            box-shadow: 0 0 12px rgba(191, 0, 255, 0.18);
+        }
+        .pill-neon {
+            background: rgba(0, 240, 255, 0.1);
+            border-color: rgba(0, 240, 255, 0.4);
+            color: var(--cyan);
+            text-shadow: 0 0 8px rgba(0, 240, 255, 0.5);
+            box-shadow: 0 0 14px rgba(0, 240, 255, 0.2);
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
 
         .refresh-btn {
-            background: rgba(56, 189, 248, 0.12);
-            border: 1px solid rgba(56, 189, 248, 0.3);
-            color: var(--blue);
+            background: rgba(0, 240, 255, 0.12);
+            border: 1px solid rgba(0, 240, 255, 0.35);
+            color: var(--cyan);
             font-family: var(--font-main);
             font-size: 11px;
             font-weight: 700;
@@ -420,9 +474,12 @@ def render_dashboard_html() -> str:
             display: inline-flex;
             align-items: center;
             gap: 4px;
+            box-shadow: 0 0 10px rgba(0, 240, 255, 0.15);
         }
         .refresh-btn:hover {
-            background: rgba(56, 189, 248, 0.25);
+            background: rgba(0, 240, 255, 0.25);
+            border-color: var(--cyan);
+            box-shadow: 0 0 16px rgba(0, 240, 255, 0.4);
             transform: translateY(-1px);
         }
         .refresh-btn:active {
@@ -441,17 +498,35 @@ def render_dashboard_html() -> str:
             border: 1px solid var(--border);
             border-radius: 12px;
             padding: 16px 20px;
-            backdrop-filter: blur(12px);
-            transition: all 0.2s ease;
+            backdrop-filter: blur(18px);
+            transition: all 0.25s ease;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        }
+        .kpi-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+            opacity: 0.35;
+            transition: opacity 0.25s ease;
         }
         .kpi-card:hover {
             border-color: var(--border-highlight);
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.25), 0 8px 30px rgba(0, 0, 0, 0.6);
             transform: translateY(-2px);
+        }
+        .kpi-card:hover::before {
+            opacity: 1;
         }
         .kpi-label {
             font-size: 11px;
             text-transform: uppercase;
-            letter-spacing: 0.8px;
+            letter-spacing: 0.9px;
             color: var(--text-muted);
             font-weight: 700;
             margin-bottom: 6px;
@@ -459,9 +534,10 @@ def render_dashboard_html() -> str:
             justify-content: space-between;
         }
         .kpi-val {
-            font-size: 24px;
+            font-size: 25px;
             font-weight: 700;
             color: var(--text-primary);
+            text-shadow: 0 0 16px rgba(255, 255, 255, 0.15);
         }
         .kpi-sub {
             font-size: 12px;
@@ -482,24 +558,27 @@ def render_dashboard_html() -> str:
         }
         .tab-btn {
             background: transparent;
-            border: none;
+            border: 1px solid transparent;
             color: var(--text-muted);
             font-family: var(--font-main);
             font-size: 13px;
             font-weight: 700;
-            padding: 8px 16px;
+            padding: 8px 18px;
             border-radius: 8px;
             cursor: pointer;
             transition: all 0.2s;
         }
         .tab-btn.active {
-            color: var(--text-primary);
-            background: rgba(255, 255, 255, 0.08);
-            box-shadow: 0 0 12px rgba(0,0,0,0.2);
+            color: var(--cyan);
+            background: rgba(0, 240, 255, 0.1);
+            border-color: rgba(0, 240, 255, 0.4);
+            box-shadow: 0 0 16px rgba(0, 240, 255, 0.25);
+            text-shadow: 0 0 8px rgba(0, 240, 255, 0.5);
         }
         .tab-btn:hover:not(.active) {
-            color: var(--text-secondary);
-            background: rgba(255, 255, 255, 0.03);
+            color: var(--text-primary);
+            background: rgba(255, 255, 255, 0.05);
+            border-color: rgba(255, 255, 255, 0.1);
         }
 
         /* Main Workspace Grid */
@@ -920,7 +999,7 @@ def render_dashboard_html() -> str:
             <div class="brand-logo">⚡</div>
             <div>
                 <div class="brand-name">
-                    IRON BOT <span style="font-size: 12px; color: var(--blue); font-weight: 700;">PRO COCKPIT</span>
+                    IRON BOT <span style="font-size: 11px; background: rgba(0, 240, 255, 0.15); border: 1px solid rgba(0, 240, 255, 0.4); color: var(--cyan); padding: 2px 8px; border-radius: 6px; font-weight: 800; letter-spacing: 0.5px; box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);">NEON CYBER v3.0</span>
                     <span class="live-dot" title="Live Polling Streaming Active"></span>
                 </div>
                 <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
@@ -957,9 +1036,9 @@ def render_dashboard_html() -> str:
             </div>
         </div>
 
-        <div class="kpi-card" style="border-color: rgba(56, 189, 248, 0.25);">
-            <div class="kpi-label">30-DAY ₹50K WALLET <span id="wallet-day-badge" class="pill pill-blue" style="padding: 2px 6px; font-size: 10px;">DAY 1 / 30</span></div>
-            <div class="kpi-val mono" id="wallet-balance-display">₹50,000.00</div>
+        <div class="kpi-card" style="border-color: rgba(0, 240, 255, 0.35);">
+            <div class="kpi-label">30-DAY ₹1 LAKH WALLET <span id="wallet-day-badge" class="pill pill-blue" style="padding: 2px 6px; font-size: 10px;">DAY 1 / 30</span></div>
+            <div class="kpi-val mono" id="wallet-balance-display">₹1,00,000.00</div>
             <div class="kpi-sub">
                 <span id="wallet-roi-sub" class="mono" style="color: var(--cyan); font-weight: 700;">ROI: +0.00% (+₹0.00)</span>
             </div>
@@ -1036,69 +1115,69 @@ def render_dashboard_html() -> str:
                                 <button class="sandbox-btn btn-call" onclick="triggerSimulateOrder('BUY_CE', 25200, 200.0)">🚀 Test BUY 25200 CE</button>
                                 <button class="sandbox-btn btn-put" onclick="triggerSimulateOrder('BUY_PE', 25100, 195.0)">🛡️ Test BUY 25100 PE</button>
                                 <button class="sandbox-btn btn-reset" onclick="triggerResetLimits()">🔄 Reset Quota (0/4)</button>
-                                <button class="sandbox-btn btn-reset" style="background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.35); color: var(--cyan);" onclick="triggerResetWallet()">💼 Reset ₹50K Wallet</button>
+                                <button class="sandbox-btn btn-reset" style="background: rgba(0, 240, 255, 0.12); border-color: rgba(0, 240, 255, 0.35); color: var(--cyan);" onclick="triggerResetWallet()">💼 Reset ₹1 Lakh Wallet</button>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- 30-Day ₹50,000 Capital & ROI Campaign Engine -->
-                <div class="card-box" style="border: 1px solid rgba(56, 189, 248, 0.25); background: linear-gradient(180deg, rgba(14, 21, 36, 0.85) 0%, rgba(8, 12, 20, 0.95) 100%);">
+                <!-- 30-Day ₹1 Lakh Capital & ROI Campaign Engine -->
+                <div class="card-box" style="border: 1px solid rgba(0, 240, 255, 0.3); background: linear-gradient(180deg, rgba(10, 16, 32, 0.9) 0%, rgba(5, 8, 17, 0.98) 100%);">
                     <div class="card-box-header">
                         <div class="card-box-title">
-                            <span>💼 30-DAY ₹50,000 CAPITAL & ROI CAMPAIGN</span>
+                            <span>💼 30-DAY ₹1 LAKH CAPITAL & ROI CAMPAIGN</span>
                         </div>
-                        <div class="pill pill-blue mono" id="campaign-day-pill">DAY 1 OF 30 • 30 DAYS LEFT</div>
+                        <div class="pill pill-neon mono" id="campaign-day-pill">DAY 1 OF 30 • 30 DAYS LEFT</div>
                     </div>
 
                     <!-- Visual Timeline Progress Bar -->
                     <div style="margin: 12px 0 16px 0;">
                         <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 6px;">
-                            <span style="color: var(--text-muted);">Campaign Window: <b id="campaign-dates-span" style="color: var(--text-secondary);">2026-11-15 → 30-Day Horizon</b></span>
+                            <span style="color: var(--text-muted);">Campaign Window: <b id="campaign-dates-span" style="color: var(--text-secondary);">2026-11-25 → 30-Day Horizon</b></span>
                             <span class="mono" id="campaign-progress-text" style="color: var(--cyan); font-weight: 700;">Day 1 / 30 (3.3%)</span>
                         </div>
                         <div style="height: 6px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden;">
-                            <div id="campaign-progress-bar" style="height: 100%; width: 3.3%; background: linear-gradient(90deg, var(--blue), var(--cyan)); transition: width 0.4s ease;"></div>
+                            <div id="campaign-progress-bar" style="height: 100%; width: 3.3%; background: linear-gradient(90deg, var(--cyan), var(--green)); box-shadow: 0 0 10px var(--cyan); transition: width 0.4s ease;"></div>
                         </div>
                     </div>
 
                     <!-- 4-Box Capital Grid -->
                     <div class="greeks-grid">
-                        <div class="greek-box" style="border-left: 3px solid var(--blue);">
+                        <div class="greek-box" style="border-left: 3px solid var(--cyan);">
                             <div class="greek-label">INITIAL SEED FUND</div>
-                            <div class="greek-val mono" style="color: #fff;">₹50,000.00</div>
+                            <div class="greek-val mono" id="campaign-seed-val" style="color: #fff;">₹1,00,000.00</div>
                             <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">Fixed Seed Cap</div>
                         </div>
-                        <div class="greek-box" style="border-left: 3px solid var(--cyan);">
-                            <div class="greek-label">LIVE ACCOUNT EQUITY</div>
-                            <div class="greek-val mono" id="campaign-cur-balance" style="color: var(--cyan);">₹50,000.00</div>
-                            <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;" id="campaign-equity-sub">₹50K + Net P&L</div>
-                        </div>
                         <div class="greek-box" style="border-left: 3px solid var(--green);">
-                            <div class="greek-label">NET 30-DAY ROI</div>
-                            <div class="greek-val mono" id="campaign-roi-pct" style="color: var(--green);">+0.00%</div>
-                            <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;" id="campaign-net-pnl-sub">+₹0.00 Net Gain</div>
+                            <div class="greek-label">LIVE ACCOUNT EQUITY</div>
+                            <div class="greek-val mono" id="campaign-cur-balance" style="color: var(--green);">₹1,00,000.00</div>
+                            <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;" id="campaign-equity-sub">₹1 Lakh + Net P&L</div>
                         </div>
                         <div class="greek-box" style="border-left: 3px solid var(--purple);">
+                            <div class="greek-label">NET 30-DAY ROI</div>
+                            <div class="greek-val mono" id="campaign-roi-pct" style="color: var(--purple);">+0.00%</div>
+                            <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;" id="campaign-net-pnl-sub">+₹0.00 Net Gain</div>
+                        </div>
+                        <div class="greek-box" style="border-left: 3px solid var(--blue);">
                             <div class="greek-label">AVAILABLE MARGIN</div>
-                            <div class="greek-val mono" id="campaign-avail-margin" style="color: #a78bfa;">₹50,000.00</div>
+                            <div class="greek-val mono" id="campaign-avail-margin" style="color: var(--blue);">₹1,00,000.00</div>
                             <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;" id="campaign-margin-used-sub">Locked: ₹0.00</div>
                         </div>
                     </div>
 
                     <!-- Institutional Target & Preservation Circuit Breaker -->
-                    <div style="margin-top: 14px; padding: 10px 14px; background: rgba(0,0,0,0.25); border-radius: 8px; border: 1px solid rgba(255,255,255,0.04); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 11px;">
+                    <div style="margin-top: 14px; padding: 10px 14px; background: rgba(0,0,0,0.35); border-radius: 8px; border: 1px solid rgba(0,240,255,0.1); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 11px;">
                         <div>
                             <span style="color: var(--text-muted);">🎯 Target:</span>
-                            <span class="mono" style="color: var(--green); font-weight: 700; margin-left: 4px;">+20% (+₹10,000 | ₹60K Target)</span>
+                            <span class="mono" id="campaign-target-desc" style="color: var(--green); font-weight: 700; margin-left: 4px;">+20% (+₹20,000 | ₹1,20,000 Target)</span>
                         </div>
                         <div>
                             <span style="color: var(--text-muted);">🛡️ Preservation Floor:</span>
-                            <span class="mono" style="color: var(--red); font-weight: 700; margin-left: 4px;">₹35,000.00 (Max -30% DD)</span>
+                            <span class="mono" id="campaign-floor-desc" style="color: var(--red); font-weight: 700; margin-left: 4px;">₹70,000.00 (Max -30% DD)</span>
                         </div>
                         <div>
                             <span style="color: var(--text-muted);">🔒 Per-Trade Cap:</span>
-                            <span class="mono" style="color: var(--yellow); font-weight: 700; margin-left: 4px;">50% Margin (₹25,000)</span>
+                            <span class="mono" id="campaign-cap-desc" style="color: var(--yellow); font-weight: 700; margin-left: 4px;">50% Margin (₹50,000)</span>
                         </div>
                     </div>
                 </div>
@@ -1747,7 +1826,7 @@ def render_dashboard_html() -> str:
         }
 
         async function triggerResetWallet() {
-            if (!confirm('Start fresh 30-Day Campaign with strict ₹50,000 INR wallet cap starting today?')) return;
+            if (!confirm('Start fresh 30-Day Campaign with strict ₹1,00,000 INR wallet cap starting today?')) return;
             try {
                 const res = await fetch('/reset_wallet', { method: 'POST' });
                 const data = await res.json();
@@ -1927,6 +2006,18 @@ def render_dashboard_html() -> str:
                     
                     const marginSub = document.getElementById('campaign-margin-used-sub');
                     if (marginSub) marginSub.innerText = `Locked: ₹${w.margin_used.toFixed(2)}`;
+
+                    const seedValEl = document.getElementById('campaign-seed-val');
+                    if (seedValEl) seedValEl.innerText = '₹' + w.initial_capital.toLocaleString('en-IN', {minimumFractionDigits: 2});
+                    
+                    const targetEl = document.getElementById('campaign-target-desc');
+                    if (targetEl && w.target_profit) targetEl.innerText = `+${w.target_roi_pct}% (+₹${w.target_profit.toLocaleString('en-IN')} | ₹${w.target_balance.toLocaleString('en-IN')} Target)`;
+                    
+                    const floorEl = document.getElementById('campaign-floor-desc');
+                    if (floorEl && w.preservation_floor) floorEl.innerText = `₹${w.preservation_floor.toLocaleString('en-IN', {minimumFractionDigits: 2})} (Max -30% DD)`;
+                    
+                    const capEl = document.getElementById('campaign-cap-desc');
+                    if (capEl) capEl.innerText = `50% Margin (₹${(w.current_balance * 0.5).toLocaleString('en-IN')})`;
                 }
 
                 // 5. Nifty Spot & ATM
@@ -2097,7 +2188,7 @@ def render_dashboard_html() -> str:
                                         <button class="sandbox-btn btn-call" onclick="triggerSimulateOrder('BUY_CE', 25200, 200.0)">🚀 Test BUY 25200 CE</button>
                                         <button class="sandbox-btn btn-put" onclick="triggerSimulateOrder('BUY_PE', 25100, 195.0)">🛡️ Test BUY 25100 PE</button>
                                         <button class="sandbox-btn btn-reset" onclick="triggerResetLimits()">🔄 Reset Quota (0/4)</button>
-                                        <button class="sandbox-btn btn-reset" style="background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.35); color: var(--cyan);" onclick="triggerResetWallet()">💼 Reset ₹50K Wallet</button>
+                                        <button class="sandbox-btn btn-reset" style="background: rgba(0, 240, 255, 0.12); border-color: rgba(0, 240, 255, 0.35); color: var(--cyan);" onclick="triggerResetWallet()">💼 Reset ₹1 Lakh Wallet</button>
                                     </div>
                                 </div>
                             </div>

@@ -35,7 +35,7 @@ class TestWalletCampaign(unittest.TestCase):
         conn.commit()
         conn.close()
         # Restore actual campaign start date
-        database.init_campaign_wallet(initial_capital=50000.0, start_date="2026-11-15")
+        database.init_campaign_wallet(initial_capital=config.INITIAL_WALLET_CAPITAL, start_date=config.CAMPAIGN_START_DATE)
         database.reset_daily_limits()
 
     def test_initial_wallet_baseline(self):
