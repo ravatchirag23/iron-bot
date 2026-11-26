@@ -138,7 +138,8 @@ def get_option_quote_by_strike(target_strike: int, is_call: bool, spot_price: fl
             "delta": delta,
             "pcr": snapshot.get("pcr", 1.0),
             "call_wall": snapshot.get("call_wall_resistance", target_strike + 150),
-            "put_wall": snapshot.get("put_wall_support", target_strike - 150)
+            "put_wall": snapshot.get("put_wall_support", target_strike - 150),
+            "is_simulated": bool(snapshot.get("is_simulated", False))
         }
     
     # Strike not found in chain snapshot - do NOT return wrong ATM strike quote to avoid false SL
@@ -253,6 +254,7 @@ def get_simulated_live_oi_structure(spot_price: float = 25050.0) -> Dict[str, An
         "total_put_oi": total_put_oi,
         "pcr": pcr,
         "sentiment": sentiment,
+        "is_simulated": True,
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
     }
 
@@ -275,9 +277,15 @@ def get_oi_snapshot(spot_price: float = 25050.0) -> Dict[str, Any]:
             _cached_data = live
             _last_fetch_time = now
             return _cached_data
+
+        # If live fetch timed out, reuse prior live cached data (< 300s old)
+        if _cached_data and not _cached_data.get("is_simulated", False) and (now - _last_fetch_time) < 300.0:
+            logger.info("Reusing cached live option chain data during transient network timeout")
+            return _cached_data
             
         # Fallback: Structural mathematical model
-        _cached_data = get_simulated_live_oi_structure(spot_price)
+        sim = get_simulated_live_oi_structure(spot_price)
+        _cached_data = sim
         _last_fetch_time = now
         return _cached_data
     except Exception as e:

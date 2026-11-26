@@ -406,6 +406,12 @@ def start_position_monitor_thread():
                 # B. Position Monitor (Exact Strike-Level Tracking)
                 active = database.get_active_trade()
                 if active:
+                    # B1. Mandatory 15:15 IST Square-Off Guardrail
+                    if now_ist.time() >= config.AUTO_SQUARE_OFF_TIME:
+                        logger.info(f"Mandatory 15:15 PM Square-off triggered for trade #{active['id']}.")
+                        paper_engine.engine.force_exit(reason="15:15_PM_AUTO_SQUARE_OFF")
+                        continue
+
                     symbol = active["symbol"]
                     is_call = "CE" in symbol
                     spot = float(active.get("spot_price", 25050.0))
@@ -418,6 +424,13 @@ def start_position_monitor_thread():
                     quote = option_chain_shield.get_option_quote_by_strike(held_strike, is_call, spot_price=spot)
                     live_ltp = float(quote.get("ltp", 0.0))
                     
+                    # If live feed timed out and returned simulated quote, anchor price via Delta to real entry
+                    if quote.get("is_simulated", False):
+                        delta = 0.50 if is_call else -0.50
+                        entry_p = float(active.get("entry_price", live_ltp or 200.0))
+                        entry_spot = float(active.get("spot_price", spot))
+                        live_ltp = round(max(1.0, entry_p + (delta * (spot - entry_spot))), 2)
+
                     if live_ltp > 0.0:
                         # Sanity Guardrail: Reject phantom price crash (e.g. timeout returning simulated 118 when entry was 204)
                         entry_p = float(active.get("entry_price", live_ltp))
