@@ -43,9 +43,28 @@ TARGET_ROI_PCT = 20.0                    # Institutional Target: +20.0% Net ROI 
 # 2. THE 13 IRON ARMOR RULES (DISCIPLINE LOCKS)
 # =====================================================================
 # Rule 1 & 2: Daily Trade & Loss Limits
-MAX_DAILY_TRADES = 4            # Up to 4 trades per day (Stress-test & capability evaluation)
-MAX_DAILY_LOSS_RUPEES = 2500    # Maximum daily risk limit (Hard shutdown for up to 4 trades)
+MAX_DAILY_TRADES = 4            # Default 4 trades per day (Discipline baseline)
+MAX_DAILY_LOSS_RUPEES = 2500    # Maximum daily risk limit (Hard shutdown)
 DEFAULT_LOT_SIZE = 65           # 1 Lot Nifty (or 25/50 depending on contract)
+
+def get_max_daily_trades(target_date: Optional[str] = None) -> int:
+    """
+    Returns dynamic daily trade quota.
+    Supports date-specific overrides in DB (e.g., today only).
+    If no override exists for target_date, falls back to MAX_DAILY_TRADES (4).
+    """
+    try:
+        import database
+        if not target_date:
+            target_date = get_today_ist()
+        override_date = database.get_config("max_trades_override_date")
+        if override_date == target_date:
+            val = database.get_config("max_trades_override_value")
+            if val is not None:
+                return int(val)
+    except Exception:
+        pass
+    return MAX_DAILY_TRADES
 
 # Rule 3 & 4: Time Windows
 MARKET_START_TIME = time(9, 30) # No trade before 9:30 AM (avoid opening noise)

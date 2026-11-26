@@ -227,6 +227,26 @@ def lock_system_today(reason: str):
         """, (reason, today_str))
     log_event("SYSTEM_LOCKED", f"System locked for {today_str}: {reason}")
 
+def unlock_system_today(today_str: Optional[str] = None):
+    """Clears the daily lock on daily_tracker for today."""
+    if not today_str:
+        today_str = config.get_today_ist()
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE daily_tracker SET is_locked = 0, lock_reason = NULL WHERE trade_date = ?
+        """, (today_str,))
+    log_event("SYSTEM_UNLOCKED", f"System unlocked for {today_str}")
+
+def set_today_trade_limit(limit: int, target_date: Optional[str] = None):
+    """Sets a date-specific trade limit override (for today only) and unlocks system."""
+    if not target_date:
+        target_date = config.get_today_ist()
+    set_config("max_trades_override_date", target_date)
+    set_config("max_trades_override_value", str(limit))
+    unlock_system_today(target_date)
+    log_event("TRADE_LIMIT_OVERRIDE", f"Trade limit set to {limit} for {target_date}")
+
 def get_active_trade() -> Optional[Dict[str, Any]]:
     conn = get_connection()
     try:

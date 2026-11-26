@@ -219,7 +219,7 @@ def get_live_dashboard_state() -> Dict[str, Any]:
         "paper_trading_mode": config.PAPER_TRADING_MODE,
         "today_stats": {
             "trade_count": today_stats.get("trade_count", 0),
-            "max_trades": config.MAX_DAILY_TRADES,
+            "max_trades": getattr(config, "get_max_daily_trades", lambda: config.MAX_DAILY_TRADES)(),
             "total_pnl_rupees": today_stats.get("total_pnl_rupees", 0.0),
             "max_daily_loss": config.MAX_DAILY_LOSS_RUPEES,
             "is_locked": is_locked,

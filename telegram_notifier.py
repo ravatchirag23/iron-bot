@@ -69,7 +69,7 @@ def notify_entry(symbol: str, signal_type: str, entry_price: float, sl_price: fl
         import config
         stats = database.get_today_stats()
         trades_done = stats.get("trade_count", 1)
-        max_trades = getattr(config, "MAX_DAILY_TRADES", 4)
+        max_trades = getattr(config, "get_max_daily_trades", lambda: getattr(config, "MAX_DAILY_TRADES", 4))()
         status_line = f"🔒 *Status:* Trade {trades_done}/{max_trades} Active. Discipline locks ON!"
     except Exception:
         status_line = "🔒 *Status:* Trade Active. Discipline locks ON!"
@@ -108,7 +108,7 @@ def notify_exit(symbol: str, exit_price: float, reason: str, pnl_points: float, 
         import config
         stats = database.get_today_stats()
         trades_done = stats.get("trade_count", 0)
-        max_trades = getattr(config, "MAX_DAILY_TRADES", 4)
+        max_trades = getattr(config, "get_max_daily_trades", lambda: getattr(config, "MAX_DAILY_TRADES", 4))()
         is_locked = stats.get("is_locked", 0)
         if is_locked or trades_done >= max_trades:
             state_line = f"🔒 *System State:* DAILY LIMIT REACHED ({trades_done}/{max_trades}). Hibernating till tomorrow!"

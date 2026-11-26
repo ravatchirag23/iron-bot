@@ -30,9 +30,10 @@ def validate_signal_armor(signal_data: Dict[str, Any]) -> Tuple[bool, str]:
         return False, f"System is LOCKED for today ({stats.get('lock_reason', 'Limit reached')})"
         
     # 2. Daily Trade Count Limit (Rule 1)
-    if stats.get("trade_count", 0) >= config.MAX_DAILY_TRADES:
-        database.lock_system_today(f"Max daily trades limit ({config.MAX_DAILY_TRADES}) reached")
-        return False, f"Max daily trade limit ({config.MAX_DAILY_TRADES}) reached. Zero overtrading!"
+    max_trades = getattr(config, "get_max_daily_trades", lambda: config.MAX_DAILY_TRADES)()
+    if stats.get("trade_count", 0) >= max_trades:
+        database.lock_system_today(f"Max daily trades limit ({max_trades}) reached")
+        return False, f"Max daily trade limit ({max_trades}) reached. Zero overtrading!"
         
     # 3. Daily Loss Limit (Rule 2)
     if stats.get("total_pnl_rupees", 0.0) <= -config.MAX_DAILY_LOSS_RUPEES:
