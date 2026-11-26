@@ -419,6 +419,14 @@ def start_position_monitor_thread():
                     live_ltp = float(quote.get("ltp", 0.0))
                     
                     if live_ltp > 0.0:
+                        # Sanity Guardrail: Reject phantom price crash (e.g. timeout returning simulated 118 when entry was 204)
+                        entry_p = float(active.get("entry_price", live_ltp))
+                        if abs(live_ltp - entry_p) > 25.0:
+                            entry_spot = float(active.get("spot_price", spot))
+                            spot_mv = abs(spot - entry_spot)
+                            if spot_mv < 25.0:
+                                logger.warning(f"⚠️ Glitch tick rejected! live_ltp={live_ltp} vs entry={entry_p} (diff={live_ltp-entry_p:.1f} pts) while spot only moved {spot_mv:.1f} pts.")
+                                continue
                         res = paper_engine.engine.update_tick(live_ltp)
                         if res and res.get("status") == "CLOSED":
                             logger.info(f"Position #{active['id']} closed automatically: {res.get('reason')} at ₹{live_ltp}")

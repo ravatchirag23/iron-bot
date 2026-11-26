@@ -171,9 +171,13 @@ class PaperTradingEngine:
                 tag = f"🚀 RUNNER EXTENSION: Hit ₹{old_target:.2f}! Trailing Target extended to ₹{new_target:.2f} (SL locked @ ₹{new_sl:.2f} | +{locked_pts} pts profit)"
                 telegram_notifier.notify_trailing_update(symbol, tag, new_sl, locked_pts * qty)
 
-            # 2. Stop-Loss Hit (Realistic Gap-Through Fill: use WORSE of actual price vs SL)
+            # 2. Stop-Loss Hit (Realistic Gap-Through Fill: clamped to realistic market slippage)
             if current_price <= sl:
-                actual_exit = min(current_price, sl)  # In gap-through, price is below SL
+                # Sanity Guardrail: Maximum realistic market slippage on Stop-Loss is 15.0 pts.
+                # Allows realistic market slippage (3-5 pts) while blocking upstream API glitch crashes (e.g. 80-pt phantom drops)
+                max_slip = getattr(config, "MAX_SLIPPAGE_POINTS", 15.0)
+                clamped_price = max(sl - max_slip, current_price)
+                actual_exit = min(clamped_price, sl)
                 bid_exit = round(actual_exit - config.BID_ASK_FRICTION_POINTS, 2)
                 pnl_pts = round(bid_exit - entry, 2)
                 pnl_rupees = round(pnl_pts * qty, 2)
