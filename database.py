@@ -248,11 +248,12 @@ def set_today_trade_limit(limit: int, target_date: Optional[str] = None):
     log_event("TRADE_LIMIT_OVERRIDE", f"Trade limit set to {limit} for {target_date}")
 
 def set_today_loss_limit(limit: float, target_date: Optional[str] = None):
-    """Sets a date-specific loss limit override (for today only)."""
+    """Sets a date-specific loss limit override (for today only) and unlocks system."""
     if not target_date:
         target_date = config.get_today_ist()
     set_config("max_loss_override_date", target_date)
     set_config("max_loss_override_value", str(limit))
+    unlock_system_today(target_date)
     log_event("LOSS_LIMIT_OVERRIDE", f"Daily loss limit set to ₹{limit} for {target_date}")
 
 def set_max_sl_points(points: float):
