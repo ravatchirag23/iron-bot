@@ -137,5 +137,34 @@ class TestAuditFixes(unittest.TestCase):
         self.assertLess(params["sl_price"], params["entry_price"])
         self.assertGreater(params["target_price"], params["entry_price"])
 
+    def test_dynamic_limits_and_sl_cap(self):
+        """Test date-specific overrides for trade limit, loss limit, and per-trade SL cap."""
+        today = config.get_today_ist()
+        
+        # 1. Trade Limit Override
+        self.assertEqual(config.get_max_daily_trades(), 4)
+        database.set_today_trade_limit(10, today)
+        self.assertEqual(config.get_max_daily_trades(), 10)
+        
+        # 2. Loss Limit Override
+        self.assertEqual(config.get_max_daily_loss(), 2500.0)
+        database.set_today_loss_limit(3500.0, today)
+        self.assertEqual(config.get_max_daily_loss(), 3500.0)
+        
+        # 3. Per-trade SL Cap Override
+        database.set_max_sl_points(11.0)
+        self.assertEqual(config.get_max_sl_points(), 11.0)
+        
+        # With 11.0 pt cap, an ITM trade (normally 19-22 pts) must be clamped to 11.0 pts
+        sl_pts, tp_pts, regime = risk_manager.calculate_dynamic_greek_brackets(
+            entry_premium=320.0, delta=0.70, spot_atr=22.0
+        )
+        self.assertEqual(sl_pts, 11.0)
+        
+        # Cleanup
+        database.set_config("max_sl_points_override", None)
+        database.set_config("max_trades_override_date", None)
+        database.set_config("max_loss_override_date", None)
+
 if __name__ == "__main__":
     unittest.main()

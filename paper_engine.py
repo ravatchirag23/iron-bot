@@ -74,10 +74,11 @@ class PaperTradingEngine:
         """Locks the day only if max trades or max loss reached."""
         stats = database.get_today_stats()
         max_trades = getattr(config, "get_max_daily_trades", lambda: config.MAX_DAILY_TRADES)()
+        max_loss = getattr(config, "get_max_daily_loss", lambda: config.MAX_DAILY_LOSS_RUPEES)()
         if stats.get("trade_count", 0) >= max_trades:
             database.lock_system_today(f"Max daily trades limit ({max_trades}) reached")
-        elif stats.get("total_pnl_rupees", 0.0) <= -config.MAX_DAILY_LOSS_RUPEES:
-            database.lock_system_today(f"Daily loss limit (-₹{config.MAX_DAILY_LOSS_RUPEES}) hit")
+        elif stats.get("total_pnl_rupees", 0.0) <= -max_loss:
+            database.lock_system_today(f"Daily loss limit (-₹{max_loss}) hit")
 
     def update_tick(self, current_price: float) -> Optional[Dict[str, Any]]:
         """

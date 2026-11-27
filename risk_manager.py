@@ -36,9 +36,10 @@ def validate_signal_armor(signal_data: Dict[str, Any]) -> Tuple[bool, str]:
         return False, f"Max daily trade limit ({max_trades}) reached. Zero overtrading!"
         
     # 3. Daily Loss Limit (Rule 2)
-    if stats.get("total_pnl_rupees", 0.0) <= -config.MAX_DAILY_LOSS_RUPEES:
-        database.lock_system_today(f"Daily loss limit (-₹{config.MAX_DAILY_LOSS_RUPEES}) hit")
-        return False, f"Daily max loss (-₹{config.MAX_DAILY_LOSS_RUPEES}) hit. Capital protection active!"
+    max_loss = getattr(config, "get_max_daily_loss", lambda: config.MAX_DAILY_LOSS_RUPEES)()
+    if stats.get("total_pnl_rupees", 0.0) <= -max_loss:
+        database.lock_system_today(f"Daily loss limit (-₹{max_loss}) hit")
+        return False, f"Daily max loss (-₹{max_loss}) hit. Capital protection active!"
 
     # 4. Active Trade Check (No overlapping / duplicate trades)
     active = database.get_active_trade()
@@ -185,10 +186,13 @@ def calculate_dynamic_greek_brackets(entry_premium: float, delta: float = 0.50, 
     # Theoretical option drop = |Delta| * ΔS_stop + Half-Spread Buffer (0.75 pts)
     sl_points_raw = (abs_delta * spot_noise_distance) + (config.BID_ASK_FRICTION_POINTS / 2.0)
     
-    # Guardrails: Min floor (6.0 pts) and Max Cap (15% of premium)
+    # Guardrails: Min floor (6.0 pts) and Max Cap (15% of premium and MAX_SL_POINTS)
     min_sl = getattr(config, "MIN_SL_POINTS", 6.0)
     max_sl_pct = getattr(config, "MAX_SL_PREMIUM_PCT", 0.15)
     max_allowed_sl = max(min_sl + 2.0, entry_premium * max_sl_pct)
+    max_sl_pts_cap = getattr(config, "get_max_sl_points", lambda: getattr(config, "MAX_SL_POINTS", 13.0))()
+    if max_sl_pts_cap is not None:
+        max_allowed_sl = min(max_allowed_sl, float(max_sl_pts_cap))
     
     sl_points = max(min_sl, min(sl_points_raw, max_allowed_sl))
     sl_points = round(sl_points, 1)

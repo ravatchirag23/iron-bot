@@ -192,7 +192,7 @@ def run_8am_handshake(force: bool = False) -> Dict[str, Any]:
     
     trade_count = stats.get("trade_count", 0)
     max_trades = getattr(config, "get_max_daily_trades", lambda: getattr(config, "MAX_DAILY_TRADES", 4))()
-    max_loss = getattr(config, "MAX_DAILY_LOSS_RUPEES", 2500)
+    max_loss = getattr(config, "get_max_daily_loss", lambda: getattr(config, "MAX_DAILY_LOSS_RUPEES", 2500))()
     
     macro_info = "Neutral"
     vix_val = "15.0"

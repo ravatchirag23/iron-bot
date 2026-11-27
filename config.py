@@ -67,6 +67,25 @@ def get_max_daily_trades(target_date: Optional[str] = None) -> int:
         pass
     return MAX_DAILY_TRADES
 
+def get_max_daily_loss(target_date: Optional[str] = None) -> float:
+    """
+    Returns dynamic daily loss limit.
+    Supports date-specific overrides in DB (e.g., today only).
+    If no override exists for target_date, falls back to MAX_DAILY_LOSS_RUPEES (2500.0).
+    """
+    try:
+        import database
+        if not target_date:
+            target_date = get_today_ist()
+        override_date = database.get_config("max_loss_override_date")
+        if override_date == target_date:
+            val = database.get_config("max_loss_override_value")
+            if val is not None:
+                return float(val)
+    except Exception:
+        pass
+    return float(MAX_DAILY_LOSS_RUPEES)
+
 # Rule 3 & 4: Time Windows
 MARKET_START_TIME = time(9, 30) # No trade before 9:30 AM (avoid opening noise)
 MARKET_END_TIME = time(14, 45)   # No new entries after 2:45 PM
@@ -98,9 +117,22 @@ SPOT_NOISE_MULTIPLIER = 1.3         # 1.3x ATR breathing room to eliminate noise
 TARGET_RR_RATIO = 1.8               # 1:1.8 Risk-to-Reward Ratio (Institutional Target)
 MAX_SL_PREMIUM_PCT = 0.15           # Max 15% of premium risked on any trade
 MIN_SL_POINTS = 6.0                 # Minimum floor SL points
-DEFAULT_MICRO_SL_POINTS = 14.0      # Fallback baseline SL (14 pts risk)
+MAX_SL_POINTS = None                # Optional ceiling for per-trade Micro-SL; None allows Greek Buchanan model (up to 25 pts)
+DEFAULT_MICRO_SL_POINTS = 14.0      # Fallback baseline SL
 DEFAULT_TARGET_POINTS = 14.0        # Realistic Hit & Run Target (+14 pts, locks ~₹910/lot on normal days)
 ENABLE_VIX_ADAPTIVE = True          # Scales SL/TP based on India VIX regime
+
+def get_max_sl_points() -> Optional[float]:
+    """Returns dynamic per-trade stop loss point ceiling (supports DB override)."""
+    try:
+        import database
+        val = database.get_config("max_sl_points_override")
+        if val is not None:
+            return float(val)
+    except Exception:
+        pass
+    val = globals().get("MAX_SL_POINTS", None)
+    return float(val) if val is not None else None
 
 # Rule 9: Reality-Proof 3-Stage Bracket Engine (Solves Breakeven Choke Flaw)
 # Stage 1: Soft Risk Buffer (Leaves 6.0 pts breathing room for 2-tick pullback wicks, slashes risk 60%)

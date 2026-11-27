@@ -247,6 +247,19 @@ def set_today_trade_limit(limit: int, target_date: Optional[str] = None):
     unlock_system_today(target_date)
     log_event("TRADE_LIMIT_OVERRIDE", f"Trade limit set to {limit} for {target_date}")
 
+def set_today_loss_limit(limit: float, target_date: Optional[str] = None):
+    """Sets a date-specific loss limit override (for today only)."""
+    if not target_date:
+        target_date = config.get_today_ist()
+    set_config("max_loss_override_date", target_date)
+    set_config("max_loss_override_value", str(limit))
+    log_event("LOSS_LIMIT_OVERRIDE", f"Daily loss limit set to ₹{limit} for {target_date}")
+
+def set_max_sl_points(points: float):
+    """Sets a per-trade SL points override (e.g. 10.0 or 12.0 pts to reduce per-trade loss)."""
+    set_config("max_sl_points_override", str(points))
+    log_event("SL_CAP_OVERRIDE", f"Per-trade Micro-SL point ceiling set to {points} pts")
+
 def get_active_trade() -> Optional[Dict[str, Any]]:
     conn = get_connection()
     try:
@@ -278,8 +291,15 @@ def get_config(key: str, default: Optional[str] = None) -> Optional[str]:
     finally:
         conn.close()
 
-def set_config(key: str, value: str):
-    """Saves or updates dynamic config value in system_config."""
+def set_config(key: str, value: Optional[str]):
+    """Saves, updates, or deletes dynamic config value in system_config."""
+    if value is None:
+        with db_session() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM system_config WHERE key = ?", (key,))
+        log_event("CONFIG_DELETED", f"Key '{key}' deleted from dynamic config")
+        return
+
     now_str = config.get_now_str_ist()
     with db_session() as conn:
         cursor = conn.cursor()
@@ -287,7 +307,7 @@ def set_config(key: str, value: str):
             INSERT INTO system_config (key, value, updated_at) 
             VALUES (?, ?, ?)
             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-        """, (key, value, now_str))
+        """, (key, str(value), now_str))
     log_event("CONFIG_UPDATED", f"Key '{key}' updated dynamically")
 
 def reset_daily_limits(today_str: Optional[str] = None):
@@ -298,6 +318,7 @@ def reset_daily_limits(today_str: Optional[str] = None):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM daily_tracker WHERE trade_date = ?", (today_str,))
         cursor.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
+        cursor.execute("DELETE FROM system_config WHERE key IN ('max_trades_override_date', 'max_trades_override_value', 'max_loss_override_date', 'max_loss_override_value', 'max_sl_points_override')")
 
 def get_wallet_stats() -> Dict[str, Any]:
     """
