@@ -240,6 +240,7 @@ class NativeMarketScanner:
 
             # Emit signal ONLY on confirmed closed bar!
             # The execution engine checks if already in trade to prevent duplicate entries
+            day_open = float(candles_5m[0]["open"]) if n > 0 else float(close)
             if buy_signal_raw:
                 pos_state = 1
                 if i == eval_idx and candle_timestamp != self.last_candle_time:
@@ -247,6 +248,7 @@ class NativeMarketScanner:
                     new_signal = {
                         "signal": "BUY_CE",
                         "spot": close,
+                        "day_open": day_open,
                         "candle_open": candles_5m[i]["open"],
                         "candle_high": candles_5m[i]["high"],
                         "candle_low": candles_5m[i]["low"],
@@ -262,6 +264,7 @@ class NativeMarketScanner:
                     new_signal = {
                         "signal": "BUY_PE",
                         "spot": close,
+                        "day_open": day_open,
                         "candle_open": candles_5m[i]["open"],
                         "candle_high": candles_5m[i]["high"],
                         "candle_low": candles_5m[i]["low"],
@@ -291,6 +294,7 @@ class NativeMarketScanner:
                     new_signal = {
                         "signal": "BUY_CE",
                         "spot": c_curr["close"],
+                        "day_open": day_open,
                         "candle_open": c_curr["open"],
                         "candle_high": c_curr["high"],
                         "candle_low": c_curr["low"],
@@ -311,6 +315,7 @@ class NativeMarketScanner:
                     new_signal = {
                         "signal": "BUY_PE",
                         "spot": c_curr["close"],
+                        "day_open": day_open,
                         "candle_open": c_curr["open"],
                         "candle_high": c_curr["high"],
                         "candle_low": c_curr["low"],

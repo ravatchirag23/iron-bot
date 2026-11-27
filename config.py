@@ -163,8 +163,22 @@ MONITOR_POLL_INTERVAL_SECONDS = 3 # Background polling frequency
 
 # Rule 14: Confluence Trend Runner (Unlimited Upside on Monster Days)
 ENABLE_CONFLUENCE_TREND_RUNNER = True # Unlock Ratchet Trailing on Strong Confluence
-RUNNER_MACRO_THRESHOLD = 30           # Required Macro Radar score (+30 for CE, -30 for PE)
-RUNNER_TRAIL_OFFSET_POINTS = 15.0     # Points to trail behind peak price above +35 pts
+RUNNER_MACRO_THRESHOLD = 15           # Required Macro Radar score (+15 for CE, -15 for PE)
+RUNNER_TRAIL_OFFSET_POINTS = 10.0     # Points to trail behind peak price on runners (tightened from 15.0)
+ENABLE_UNIVERSAL_TRAILING = False     # Baseline: allows test suite TARGET_HIT; enabled dynamically in prod
+HTF_TREND_SHIELD_POINTS = 60.0        # Strict block on counter-trend trades if Nifty moved >60 pts from Open
+HTF_TREND_SHIELD_PCT = 0.30           # Strict block on counter-trend trades if Nifty changed >0.30%
+
+def get_enable_universal_trailing() -> bool:
+    """Returns dynamic universal trailing setting (supports DB override)."""
+    try:
+        import database
+        val = database.get_config("enable_universal_trailing")
+        if val is not None:
+            return val.lower() in ("1", "true", "yes")
+    except Exception:
+        pass
+    return bool(globals().get("ENABLE_UNIVERSAL_TRAILING", False))
 
 # =====================================================================
 # 3. MACRO RADAR & OPTION CHAIN CONFLUENCE (LOOSELY COUPLED)

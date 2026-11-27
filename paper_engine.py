@@ -143,19 +143,7 @@ class PaperTradingEngine:
             # 1. Target Hit & Runner Trailing Extension
             is_runner = bool(trade.get("is_runner", 0))
 
-            if not is_runner and current_price >= target:
-                # Fixed Target Exit (Hit & Run for Normal/Chop days)
-                bid_exit = round(target - config.BID_ASK_FRICTION_POINTS, 2)
-                pnl_pts = round(bid_exit - entry, 2)
-                pnl_rupees = round(pnl_pts * qty, 2)
-                database.record_trade_exit(trade_id, bid_exit, "TARGET_HIT", pnl_pts, pnl_rupees)
-                self._check_and_lock_daily_limits("TARGET_HIT")
-                telegram_notifier.notify_exit(symbol, bid_exit, "TARGET_HIT", pnl_pts, pnl_rupees)
-                self.active_trade = None
-                self.initial_sl_dist = 0.0
-                self.milestone_reached = 0
-                return {"status": "CLOSED", "reason": "TARGET_HIT", "pnl_rupees": pnl_rupees}
-            elif is_runner and current_price >= target:
+            if is_runner and current_price >= target:
                 # Trailing Target Extension for Trend Runners (Confluence days)
                 # Extend target by +10 pts and tighten trailing SL to lock profit
                 old_target = target
@@ -171,6 +159,38 @@ class PaperTradingEngine:
                 locked_pts = round(new_sl - entry, 1)
                 tag = f"🚀 RUNNER EXTENSION: Hit ₹{old_target:.2f}! Trailing Target extended to ₹{new_target:.2f} (SL locked @ ₹{new_sl:.2f} | +{locked_pts} pts profit)"
                 telegram_notifier.notify_trailing_update(symbol, tag, new_sl, locked_pts * qty)
+            elif not is_runner and current_price >= target:
+                universal_trailing = getattr(config, "get_enable_universal_trailing", lambda: getattr(config, "ENABLE_UNIVERSAL_TRAILING", False))()
+                if universal_trailing:
+                    old_target = target
+                    new_target = round(target + 10.0, 2)
+                    new_sl = round(max(sl, target - 3.0), 2)
+                    self._update_target(trade_id, new_target)
+                    self._update_sl(trade_id, new_sl)
+                    with database.db_session() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("UPDATE trades SET is_runner = 1 WHERE id = ?", (trade_id,))
+                    trade["target_price"] = new_target
+                    trade["sl_price"] = new_sl
+                    trade["is_runner"] = 1
+                    sl = new_sl
+                    target = new_target
+                    self.milestone_reached = max(self.milestone_reached, 3)
+                    locked_pts = round(new_sl - entry, 1)
+                    tag = f"🚀 UNIVERSAL TRAIL: Hit ₹{old_target:.2f}! Target extended to ₹{new_target:.2f} (Profit locked @ ₹{new_sl:.2f} | +{locked_pts} pts guaranteed)"
+                    telegram_notifier.notify_trailing_update(symbol, tag, new_sl, locked_pts * qty)
+                else:
+                    # Fixed Target Exit (Hit & Run for Normal/Chop days)
+                    bid_exit = round(target - config.BID_ASK_FRICTION_POINTS, 2)
+                    pnl_pts = round(bid_exit - entry, 2)
+                    pnl_rupees = round(pnl_pts * qty, 2)
+                    database.record_trade_exit(trade_id, bid_exit, "TARGET_HIT", pnl_pts, pnl_rupees)
+                    self._check_and_lock_daily_limits("TARGET_HIT")
+                    telegram_notifier.notify_exit(symbol, bid_exit, "TARGET_HIT", pnl_pts, pnl_rupees)
+                    self.active_trade = None
+                    self.initial_sl_dist = 0.0
+                    self.milestone_reached = 0
+                    return {"status": "CLOSED", "reason": "TARGET_HIT", "pnl_rupees": pnl_rupees}
 
             # 2. Stop-Loss Hit (Realistic Gap-Through Fill: clamped to realistic market slippage)
             if current_price <= sl:
@@ -237,19 +257,20 @@ class PaperTradingEngine:
                     tag = f"🏃 RUNNER: Giant Momentum! Locked +{locked_pts} pts profit @ ₹{new_sl:.2f}"
                     telegram_notifier.notify_trailing_update(symbol, tag, new_sl, locked_pts * qty)
 
-            # Milestone 4+: Ratchet Trailing for Mega Trend Runners (Gain > 26 pts)
-            elif is_runner and gain > 26.0:
-                offset = getattr(config, "RUNNER_TRAIL_OFFSET_POINTS", 12.0)
+            # Milestone 4+: Ratchet Trailing for Mega Trend Runners (Gain >= 20.0 pts)
+            elif is_runner and gain >= 20.0:
+                offset = getattr(config, "RUNNER_TRAIL_OFFSET_POINTS", 10.0)
                 dynamic_sl = round(current_price - offset, 2)
                 if dynamic_sl > (sl + 2.0): # Step up whenever price moves 2+ pts higher
                     self._update_sl(trade_id, dynamic_sl)
                     trade["sl_price"] = dynamic_sl
                     sl = dynamic_sl
+                    locked_gain = round(dynamic_sl - entry, 1)
                     telegram_notifier.notify_trailing_update(
                         symbol, 
-                        f"🌊 RUNNER SURFING: +{gain:.1f} pts! Trailing SL raised to ₹{dynamic_sl:.2f}", 
+                        f"🌊 RUNNER SURFING: +{gain:.1f} pts! Trailing SL raised to ₹{dynamic_sl:.2f} (Locking +{locked_gain} pts)", 
                         dynamic_sl, 
-                        (dynamic_sl - entry) * qty
+                        locked_gain * qty
                     )
 
             return {"status": "ACTIVE", "current_price": current_price, "sl": sl, "gain": gain}

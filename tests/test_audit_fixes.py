@@ -166,5 +166,72 @@ class TestAuditFixes(unittest.TestCase):
         database.set_config("max_trades_override_date", None)
         database.set_config("max_loss_override_date", None)
 
+    def test_htf_trend_shield_and_confluence_runner(self):
+        """Test HTF Trend Shield blocks counter-trend traps, and technical confluence enables runners."""
+        database.reset_daily_limits()
+        database.reset_daily_limits("2026-11-18")
+        with patch("config.get_now_ist", return_value=MOCK_NOW_1130), \
+             patch("config.get_today_ist", return_value="2026-11-18"):
+            # 1. HTF Trend Shield: Nifty down 100 pts from Open -> CE must be blocked!
+            signal_ce = {
+                "signal": "BUY_CE",
+                "spot": 25700.0,
+                "day_open": 25800.0,
+                "candle_range": 22.0,
+                "is_test": False
+            }
+            approved, reason = risk_manager.validate_signal_armor(signal_ce)
+            self.assertFalse(approved)
+            self.assertIn("Trend Shield", reason)
+
+            # 2. HTF Trend Shield: With trend PE must be approved!
+            signal_pe = {
+                "signal": "BUY_PE",
+                "spot": 25700.0,
+                "day_open": 25800.0,
+                "candle_range": 22.0,
+                "is_test": False
+            }
+            approved_pe, _ = risk_manager.validate_signal_armor(signal_pe)
+            self.assertTrue(approved_pe)
+
+            # 3. Technical Confluence Runner: PCR <= 0.88 enables runner even if macro is +20
+            with patch("macro_radar.get_macro_sentiment", return_value={"score": 20}), \
+                 patch("option_chain_shield.get_oi_snapshot", return_value={"pcr": 0.75, "call_wall_resistance": 26000, "put_wall_support": 25500}):
+                params = risk_manager.calculate_trade_parameters(signal_pe)
+                self.assertTrue(params["is_runner"])
+                self.assertIn("BEARISH CONFLUENCE", params["runner_reason"])
+
+    def test_universal_trailing_promotion(self):
+        """When universal trailing is enabled, any trade reaching target is promoted to runner."""
+        database.reset_daily_limits()
+        try:
+            with patch("config.get_now_ist", return_value=MOCK_NOW_1130):
+                database.set_universal_trailing(True)
+                trade_params = {
+                    "signal_type": "BUY_CE",
+                    "symbol": "NIFTY25250CE_UNIV_TRAIL",
+                    "spot_price": 25250.0,
+                    "entry_price": 200.0,
+                    "sl_price": 185.0,
+                    "target_price": 214.0,
+                    "quantity": 65,
+                    "is_runner": False # Started as non-runner
+                }
+                trade_id = paper_engine.engine.process_entry(trade_params)
+                self.assertIsNotNone(trade_id)
+
+                # Price reaches target 214.0
+                event = paper_engine.engine.update_tick(214.5)
+                # Must NOT exit, must promote to runner and extend target!
+                self.assertEqual(event["status"], "ACTIVE")
+                active = database.get_active_trade()
+                self.assertEqual(active["target_price"], 224.0)
+                self.assertEqual(active["is_runner"], 1)
+        finally:
+            database.set_config("enable_universal_trailing", None)
+            database.reset_daily_limits()
+            paper_engine.engine.sync_state()
+
 if __name__ == "__main__":
     unittest.main()

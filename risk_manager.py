@@ -133,19 +133,34 @@ def validate_signal_armor(signal_data: Dict[str, Any]) -> Tuple[bool, str]:
         return False, f"Position Sizing Cap: Required margin ₹{required_margin:,.2f} exceeds max 50% wallet allocation (₹{max_margin_allowed:,.2f})!"
 
     # 10. Higher-Timeframe Trend Shield (Rule 16: Never fade extreme trend days)
-    # If Nifty has gained >= 0.75% intraday, block counter-trend PE scalp trades.
-    # Conversely, if Nifty is down <= -0.75% intraday, block counter-trend CE scalp trades.
+    # If Nifty has gained >= 0.30% or +60 pts from Open, block counter-trend PE scalp trades.
+    # Conversely, if Nifty is down <= -0.30% or -60 pts from Open, block counter-trend CE scalp trades.
     if not is_test:
+        is_pe = "PE" in signal_type or "PUT" in signal_type or "SHORT" in signal_type
+        is_ce = "CE" in signal_type or ("BUY" in signal_type and not is_pe)
+        
+        # Method A: Direct Day Open validation from intraday 5m chart
+        day_open = float(signal_data.get("day_open") or 0.0)
+        spot_price = float(signal_data.get("spot") or 0.0)
+        htf_pts_limit = getattr(config, "HTF_TREND_SHIELD_POINTS", 60.0)
+        
+        if day_open > 0 and spot_price > 0:
+            intraday_diff = round(spot_price - day_open, 1)
+            if intraday_diff <= -htf_pts_limit and is_ce:
+                return False, f"HTF Trend Shield: Nifty is down {intraday_diff} pts from Open ({day_open:.1f}). Counter-trend CE buy strictly blocked in heavy downtrend!"
+            if intraday_diff >= htf_pts_limit and is_pe:
+                return False, f"HTF Trend Shield: Nifty is up +{intraday_diff} pts from Open ({day_open:.1f}). Counter-trend PE buy strictly blocked in heavy uptrend!"
+
+        # Method B: Global Macro / Exchange change %
         try:
             import macro_radar
             macro = macro_radar.get_macro_sentiment()
             nifty_chg = float(macro.get("nifty", {}).get("change", 0.0) or 0.0)
-            is_pe = "PE" in signal_type or "PUT" in signal_type or "SHORT" in signal_type
-            is_ce = "CE" in signal_type or ("BUY" in signal_type and not is_pe)
+            thresh_pct = getattr(config, "HTF_TREND_SHIELD_PCT", 0.30)
             
-            if nifty_chg >= 0.75 and is_pe:
+            if nifty_chg >= thresh_pct and is_pe:
                 return False, f"Extreme Trend Shield: Nifty is up +{nifty_chg:.2f}% (Raging Bull Day). Counter-trend PE entries strictly blocked!"
-            if nifty_chg <= -0.75 and is_ce:
+            if nifty_chg <= -thresh_pct and is_ce:
                 return False, f"Extreme Trend Shield: Nifty is down {nifty_chg:.2f}% (Bloodbath Day). Counter-trend CE entries strictly blocked!"
         except Exception as e:
             logger.debug(f"Trend shield check skipped: {e}")
@@ -301,14 +316,28 @@ def calculate_trade_parameters(signal_data: Dict[str, Any]) -> Dict[str, Any]:
             call_wall = int(snapshot.get("call_wall_resistance", strike + 150))
             put_wall = int(snapshot.get("put_wall_support", strike - 150))
             
-            thresh = getattr(config, "RUNNER_MACRO_THRESHOLD", 30)
-            if is_call and macro_score >= thresh and pcr >= 1.05 and spot > put_wall:
+            thresh = getattr(config, "RUNNER_MACRO_THRESHOLD", 15)
+            is_pullback = signal_data.get("pullback_reentry", False)
+            day_open = float(signal_data.get("day_open") or 0.0)
+            intraday_pts = (spot - day_open) if day_open > 0 else 0.0
+
+            # Technical & Derivatives Confluence (Local Market Reality)
+            bullish_confluence = (macro_score >= thresh and pcr >= 1.0) or \
+                                 (pcr >= 1.10 and spot >= put_wall) or \
+                                 (is_pullback and intraday_pts >= 20.0)
+
+            bearish_confluence = (macro_score <= -thresh and pcr <= 1.0) or \
+                                 (pcr <= 0.88 and spot <= call_wall) or \
+                                 (is_pullback and intraday_pts <= -20.0)
+
+            if is_call and bullish_confluence and macro_score >= -35:
                 is_runner = True
-                runner_reason = f"🟢 BULLISH CONFLUENCE (Macro: +{macro_score}, PCR: {pcr:.2f}) -> Trend Runner Mode Activated!"
-            elif not is_call and macro_score <= -thresh and pcr <= 0.85 and spot < call_wall:
+                runner_reason = f"🟢 BULLISH CONFLUENCE (PCR: {pcr:.2f}, SpotVsOpen: {intraday_pts:+.1f}pts) -> Trend Runner Mode Activated!"
+            elif not is_call and bearish_confluence and macro_score <= 35:
                 is_runner = True
-                runner_reason = f"🔴 BEARISH CONFLUENCE (Macro: {macro_score}, PCR: {pcr:.2f}) -> Trend Runner Mode Activated!"
-        except Exception:
+                runner_reason = f"🔴 BEARISH CONFLUENCE (PCR: {pcr:.2f}, SpotVsOpen: {intraday_pts:+.1f}pts) -> Trend Runner Mode Activated!"
+        except Exception as e:
+            logger.warning(f"Error evaluating confluence runner: {e}")
             is_runner = False
             runner_reason = ""
             

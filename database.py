@@ -261,6 +261,11 @@ def set_max_sl_points(points: float):
     set_config("max_sl_points_override", str(points))
     log_event("SL_CAP_OVERRIDE", f"Per-trade Micro-SL point ceiling set to {points} pts")
 
+def set_universal_trailing(enabled: bool):
+    """Enables or disables universal trailing promotion on all trades."""
+    set_config("enable_universal_trailing", "1" if enabled else "0")
+    log_event("UNIVERSAL_TRAILING", f"Universal trailing set to {enabled}")
+
 def get_active_trade() -> Optional[Dict[str, Any]]:
     conn = get_connection()
     try:
@@ -319,7 +324,7 @@ def reset_daily_limits(today_str: Optional[str] = None):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM daily_tracker WHERE trade_date = ?", (today_str,))
         cursor.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
-        cursor.execute("DELETE FROM system_config WHERE key IN ('max_trades_override_date', 'max_trades_override_value', 'max_loss_override_date', 'max_loss_override_value', 'max_sl_points_override')")
+        cursor.execute("DELETE FROM system_config WHERE key IN ('max_trades_override_date', 'max_trades_override_value', 'max_loss_override_date', 'max_loss_override_value', 'max_sl_points_override', 'enable_universal_trailing')")
 
 def get_wallet_stats() -> Dict[str, Any]:
     """
