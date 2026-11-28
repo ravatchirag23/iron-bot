@@ -1,8 +1,12 @@
 import urllib.request
 import json
+import os
+import config
 
-token = "9174695247:AAF8_OgNYFimH7Kk-MT0OEzioRnKaCJqbOk"
-chat_id = "1651536670"
+token = os.environ.get("TELEGRAM_BOT_TOKEN", config.TELEGRAM_BOT_TOKEN)
+chat_id = os.environ.get("TELEGRAM_CHAT_ID", config.TELEGRAM_CHAT_ID)
+if not token or not chat_id:
+    raise SystemExit("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set in .env or environment")
 url = f"https://api.telegram.org/bot{token}/sendMessage"
 
 backtest_msg = (

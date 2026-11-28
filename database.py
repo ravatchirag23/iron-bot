@@ -107,6 +107,12 @@ def init_db():
     # High-Performance Indexes for 0ms Active Trade & Ledger Query Execution
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_date ON trades(trade_date);")
+    try:
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_trade ON trades(status) WHERE status = 'ACTIVE';"
+        )
+    except sqlite3.IntegrityError:
+        pass  # Legacy DB with pre-existing duplicate ACTIVE rows should not prevent startup
     
     conn.commit()
     conn.close()
@@ -126,9 +132,9 @@ def is_duplicate_alert(signal_type: str, debounce_seconds: int = 60) -> bool:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT timestamp FROM audit_logs 
-            WHERE event_type = ? 
+            WHERE event_type IN (?, ?) 
             ORDER BY id DESC LIMIT 1
-        """, (f"SIGNAL_RECEIVED_{signal_type}",))
+        """, (f"SIGNAL_ACCEPTED_{signal_type}", f"SIGNAL_RECEIVED_{signal_type}"))
         row = cursor.fetchone()
         if not row:
             return False
@@ -198,6 +204,10 @@ def record_trade_exit(trade_id: int, exit_price: float, exit_reason: str, pnl_po
     
     with db_session() as conn:
         cursor = conn.cursor()
+        cursor.execute("SELECT trade_date FROM trades WHERE id = ?", (trade_id,))
+        row = cursor.fetchone()
+        tracker_date = (row["trade_date"] if row and row["trade_date"] else today_str)
+
         cursor.execute("""
             UPDATE trades SET
                 exit_price = ?,
@@ -209,12 +219,16 @@ def record_trade_exit(trade_id: int, exit_price: float, exit_reason: str, pnl_po
             WHERE id = ?
         """, (exit_price, now_str, exit_reason, pnl_points, pnl_rupees, trade_id))
         
-        # Update daily total PnL
+        # Ensure tracker row exists for trade's own trade_date and update daily total PnL
+        cursor.execute(
+            "INSERT OR IGNORE INTO daily_tracker (trade_date) VALUES (?)",
+            (tracker_date,)
+        )
         cursor.execute("""
             UPDATE daily_tracker SET
                 total_pnl_rupees = total_pnl_rupees + ?
             WHERE trade_date = ?
-        """, (pnl_rupees, today_str))
+        """, (pnl_rupees, tracker_date))
     
     log_event("TRADE_EXITED", f"Trade #{trade_id} closed @ {exit_price} | PnL: {pnl_points:.1f} pts (₹{pnl_rupees:.2f}) | Reason: {exit_reason}")
 
@@ -222,6 +236,10 @@ def lock_system_today(reason: str):
     today_str = config.get_today_ist()
     with db_session() as conn:
         cursor = conn.cursor()
+        cursor.execute(
+            "INSERT OR IGNORE INTO daily_tracker (trade_date) VALUES (?)",
+            (today_str,)
+        )
         cursor.execute("""
             UPDATE daily_tracker SET is_locked = 1, lock_reason = ? WHERE trade_date = ?
         """, (reason, today_str))

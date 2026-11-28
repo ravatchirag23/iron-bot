@@ -3,6 +3,7 @@ Telegram Notification Engine for Iron Bot
 Sends instant alerts to Chirag's phone when trades trigger, trail, or close.
 """
 
+import os
 import urllib.request
 import urllib.parse
 import json
@@ -14,8 +15,9 @@ from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 logger = logging.getLogger("IronBot.Telegram")
 
 _ssl_ctx = ssl.create_default_context()
-_ssl_ctx.check_hostname = False
-_ssl_ctx.verify_mode = ssl.CERT_NONE
+if os.environ.get("IRON_BOT_INSECURE_SSL") == "1":
+    _ssl_ctx.check_hostname = False
+    _ssl_ctx.verify_mode = ssl.CERT_NONE
 
 def send_telegram_alert(message: str) -> bool:
     """Send formatted markdown alert to Telegram. Falls back gracefully if no token configured or in test mode."""

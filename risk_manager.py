@@ -6,15 +6,114 @@ Validates every incoming webhook before any order can be processed.
 from datetime import datetime, time
 from typing import Tuple, Dict, Any, Optional
 import logging
+import os
+import re
 import config
 import database
 
 logger = logging.getLogger("IronBot.RiskManager")
 
+_PUT_RE = re.compile(r"(?:^|[^A-Z])(PE|PUT|SHORT)(?:$|[^A-Z])", re.IGNORECASE)
+_CALL_RE = re.compile(r"(?:^|[^A-Z])(CE|CALL|LONG|BUY)(?:$|[^A-Z])", re.IGNORECASE)
+
+
+class PremiumUnavailableError(RuntimeError):
+    """Raised when live option premium cannot be resolved reliably."""
+
+
+def _is_put_signal(raw_signal: str) -> bool:
+    return bool(_PUT_RE.search(str(raw_signal or "").upper()))
+
+
+def _is_call_signal(raw_signal: str) -> bool:
+    s = str(raw_signal or "").upper()
+    return (not _is_put_signal(s)) and bool(_CALL_RE.search(s))
+
+
 def get_atm_strike(spot_price: float, is_call: bool) -> int:
     """Rounds Nifty spot to nearest 50-strike ATM."""
     base_strike = round(spot_price / 50.0) * 50
     return int(base_strike)
+
+
+def resolve_entry_premium(signal_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Resolves entry premium, ask/bid, delta, strike, expiry from explicit signal price
+    or live NSE option chain. Refuses simulated/stale quotes in production unless allowed.
+    """
+    spot = float(signal_data.get("spot") or 25050.0)
+    raw_signal = str(signal_data.get("signal") or signal_data.get("signal_type") or "BUY_CE")
+    is_call = not _is_put_signal(raw_signal)
+    atm_strike = get_atm_strike(spot, is_call)
+    friction = float(getattr(config, "BID_ASK_FRICTION_POINTS", 0.6))
+
+    explicit_price = signal_data.get("entry_price")
+    if explicit_price is not None and float(explicit_price) > 0.0:
+        ltp = float(explicit_price)
+        ask = round(ltp + friction, 2)
+        bid = round(max(0.05, ltp - friction), 2)
+        return {
+            "ltp": ltp,
+            "ask": ask,
+            "bid": bid,
+            "delta": 0.50 if is_call else -0.50,
+            "strike": atm_strike,
+            "expiry": "",
+            "symbol": f"NIFTY{atm_strike}{'CE' if is_call else 'PE'}",
+            "source": "signal",
+            "is_simulated": False,
+            "is_stale": False,
+            "age_seconds": 0.0,
+        }
+
+    import option_chain_shield
+    max_age = float(getattr(config, "MAX_QUOTE_AGE_SECONDS", 20.0))
+    try:
+        quote = option_chain_shield.get_real_option_quote(spot, is_call, max_age=max_age)
+    except TypeError:
+        quote = option_chain_shield.get_real_option_quote(spot, is_call)
+    if not quote:
+        raise PremiumUnavailableError("Empty response from option_chain_shield")
+
+    allow_sim = (
+        os.environ.get("IRON_BOT_TEST_MODE") == "1"
+        or bool(signal_data.get("is_test", False))
+        or bool(getattr(config, "ALLOW_SIMULATED_ENTRY", False))
+    )
+    if bool(quote.get("is_simulated", False)) and not allow_sim:
+        raise PremiumUnavailableError("Simulated fallback active; live NSE option chain unavailable")
+
+    if bool(quote.get("is_stale", False)) and not allow_sim:
+        age_s = float(quote.get("age_seconds", 0.0))
+        raise PremiumUnavailableError(f"Live option quote stale ({age_s:.1f}s > {max_age:.0f}s)")
+
+    ltp = float(quote.get("ltp") or 0.0)
+    if ltp <= 0.0:
+        raise PremiumUnavailableError(f"Non-positive option LTP ({ltp}) for {quote.get('symbol')}")
+
+    ask = float(quote.get("ask") or 0.0)
+    if ask <= 0.0:
+        ask = round(ltp + friction, 2)
+    bid = float(quote.get("bid") or 0.0)
+    if bid <= 0.0:
+        bid = round(max(0.05, ltp - friction), 2)
+
+    strike = int(quote.get("strike") or atm_strike)
+    expiry = str(quote.get("expiry") or "")
+    symbol = f"NIFTY{strike}{'CE' if is_call else 'PE'}" + (f" ({expiry})" if expiry else "")
+    return {
+        "ltp": ltp,
+        "ask": ask,
+        "bid": bid,
+        "delta": float(quote.get("delta") or (0.50 if is_call else -0.50)),
+        "strike": strike,
+        "expiry": expiry,
+        "symbol": symbol,
+        "source": "chain",
+        "is_simulated": bool(quote.get("is_simulated", False)),
+        "is_stale": bool(quote.get("is_stale", False)),
+        "age_seconds": float(quote.get("age_seconds", 0.0)),
+    }
 
 def validate_signal_armor(signal_data: Dict[str, Any]) -> Tuple[bool, str]:
     """
@@ -96,7 +195,7 @@ def validate_signal_armor(signal_data: Dict[str, Any]) -> Tuple[bool, str]:
             c_close = float(signal_data["candle_close"])
             c_low_val = signal_data.get("candle_low")
             c_low = float(c_low_val) if c_low_val is not None else (c_high - candle_range)
-            is_ce = "CE" in signal_type or ("BUY" in signal_type and "PE" not in signal_type)
+            is_ce = not _is_put_signal(signal_type)
             
             if is_ce and candle_range > 0:
                 upper_wick = max(0.0, c_high - c_close)
@@ -122,7 +221,12 @@ def validate_signal_armor(signal_data: Dict[str, Any]) -> Tuple[bool, str]:
         database.lock_system_today(f"Capital preservation floor reached (₹{wallet['current_balance']:,.2f} <= ₹{wallet['preservation_floor']:,.2f})")
         return False, f"Capital Preservation Circuit Breaker: Wallet balance (₹{wallet['current_balance']:,.2f}) hit floor (₹{wallet['preservation_floor']:,.2f}). Trading locked to protect capital!"
 
-    est_premium = float(signal_data.get("entry_price") or 220.0)
+    try:
+        resolved_prem = resolve_entry_premium(signal_data)
+    except PremiumUnavailableError as e:
+        return False, f"NO_LIVE_PREMIUM: {e}"
+
+    est_premium = float(resolved_prem["ask"]) if resolved_prem.get("source") == "chain" else float(resolved_prem["ltp"])
     qty = int(signal_data.get("quantity") or config.DEFAULT_LOT_SIZE)
     required_margin = round(est_premium * qty, 2)
     if required_margin > wallet["available_margin"]:
@@ -132,12 +236,19 @@ def validate_signal_armor(signal_data: Dict[str, Any]) -> Tuple[bool, str]:
     if required_margin > max_margin_allowed:
         return False, f"Position Sizing Cap: Required margin ₹{required_margin:,.2f} exceeds max 50% wallet allocation (₹{max_margin_allowed:,.2f})!"
 
+    # 9B. Option Premium Sweet Spot Bounds (Rule 7)
+    ltp_val = float(resolved_prem["ltp"])
+    min_prem = float(getattr(config, "MIN_OPTION_PREMIUM", 50.0))
+    max_prem = float(getattr(config, "MAX_OPTION_PREMIUM", 450.0))
+    if ltp_val < min_prem or ltp_val > max_prem:
+        return False, f"Option premium ₹{ltp_val:.2f} out of sweet-spot bounds (₹{min_prem:.0f}–₹{max_prem:.0f}). Entry blocked!"
+
     # 10. Higher-Timeframe Trend Shield (Rule 16: Never fade extreme trend days)
     # If Nifty has gained >= 0.30% or +60 pts from Open, block counter-trend PE scalp trades.
     # Conversely, if Nifty is down <= -0.30% or -60 pts from Open, block counter-trend CE scalp trades.
     if not is_test:
-        is_pe = "PE" in signal_type or "PUT" in signal_type or "SHORT" in signal_type
-        is_ce = "CE" in signal_type or ("BUY" in signal_type and not is_pe)
+        is_pe = _is_put_signal(signal_type)
+        is_ce = not is_pe
         
         # Method A: Direct Day Open validation from intraday 5m chart
         day_open = float(signal_data.get("day_open") or 0.0)
@@ -252,49 +363,16 @@ def calculate_trade_parameters(signal_data: Dict[str, Any]) -> Dict[str, Any]:
     spot = float(signal_data.get("spot", 25050.0))
     raw_signal = signal_data.get("signal", "BUY_CE").upper()
     
-    # Accurate Options Direction: PE/PUT/SHORT takes precedence over BUY
-    if any(k in raw_signal for k in ["PE", "PUT", "SHORT"]):
-        is_call = False
-        signal_type = "BUY_PE"
-    else:
-        is_call = True
-        signal_type = "BUY_CE"
+    # Accurate Options Direction: word-boundary regex prevents 'OPEN'/'SPOT' false PE matches
+    is_call = not _is_put_signal(raw_signal)
+    signal_type = "BUY_CE" if is_call else "BUY_PE"
 
-    strike = get_atm_strike(spot, is_call)
-    symbol = f"NIFTY{strike}{'CE' if is_call else 'PE'}"
-    
-    # Premium calculation: Fetches real live option tick LTP & Ask from NSE feed
-    entry_premium = None
-    ask_fill = None
-    delta = 0.50
-    if signal_data.get("entry_price") is not None:
-        entry_premium = float(signal_data["entry_price"])
-    else:
-        try:
-            import option_chain_shield
-            quote = option_chain_shield.get_real_option_quote(spot, is_call)
-            if quote.get("ltp", 0.0) > 0.0:
-                entry_premium = float(quote["ltp"])
-                # Real market fills at Ask price (Spread Friction)
-                ask_fill = float(quote.get("ask", entry_premium + config.BID_ASK_FRICTION_POINTS))
-                delta = float(quote.get("delta", 0.50))
-                strike = int(quote["strike"])
-                expiry_str = quote.get("expiry", "")
-                symbol = f"NIFTY{strike}{'CE' if is_call else 'PE'} ({expiry_str})"
-        except Exception:
-            entry_premium = None
-
-    if not entry_premium:
-        try:
-            import option_chain_shield
-            quote = option_chain_shield.get_real_option_quote(spot, is_call)
-            entry_premium = float(quote.get("ltp", 220.0))
-            ask_fill = float(quote.get("ask", entry_premium + config.BID_ASK_FRICTION_POINTS))
-        except Exception:
-            entry_premium = 220.0
-            ask_fill = 220.6
-    elif ask_fill is None:
-        ask_fill = round(entry_premium + config.BID_ASK_FRICTION_POINTS, 2)
+    prem = resolve_entry_premium(signal_data)
+    entry_premium = float(prem["ltp"])
+    ask_fill = float(prem["ask"])
+    delta = float(prem["delta"])
+    strike = int(prem["strike"])
+    symbol = str(prem["symbol"])
     
     # Dynamic Greek-Engineered SL & Target (Buchanan + Passarelli Model)
     spot_atr = float(signal_data.get("atr", getattr(config, "DEFAULT_SPOT_ATR", 22.0)))

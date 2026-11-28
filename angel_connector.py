@@ -19,11 +19,11 @@ _last_login_time = 0.0
 
 
 def _get_credentials() -> Dict[str, str]:
-    """Retrieves credentials from environment, database, or config defaults."""
-    api_key = os.environ.get("ANGEL_API_KEY", getattr(config, "ANGEL_API_KEY", "I2DSTb7m")).strip()
-    client_code = os.environ.get("ANGEL_CLIENT_CODE", getattr(config, "ANGEL_CLIENT_CODE", "C51977841")).strip()
-    mpin = os.environ.get("ANGEL_MPIN", getattr(config, "ANGEL_MPIN", "0071")).strip()
-    totp_secret = os.environ.get("ANGEL_TOTP_SECRET", getattr(config, "ANGEL_TOTP_SECRET", "OPNCZC6TCAHXVRPN4GELEF7M3Q")).strip()
+    """Retrieves credentials from environment or config (never hardcoded defaults)."""
+    api_key = os.environ.get("ANGEL_API_KEY", getattr(config, "ANGEL_API_KEY", "")).strip()
+    client_code = os.environ.get("ANGEL_CLIENT_CODE", getattr(config, "ANGEL_CLIENT_CODE", "")).strip()
+    mpin = os.environ.get("ANGEL_MPIN", getattr(config, "ANGEL_MPIN", "")).strip()
+    totp_secret = os.environ.get("ANGEL_TOTP_SECRET", getattr(config, "ANGEL_TOTP_SECRET", "")).strip()
     return {
         "api_key": api_key,
         "client_code": client_code,
@@ -35,7 +35,7 @@ def _get_credentials() -> Dict[str, str]:
 def get_smart_connect():
     """Generates or retrieves authenticated SmartConnect instance."""
     global _smart_connect, _session_data, _last_login_time
-    
+
     # Re-use existing session if less than 8 hours old
     now = time.time()
     if _smart_connect and _session_data and (now - _last_login_time < 28800):
@@ -49,8 +49,8 @@ def get_smart_connect():
         return None
 
     creds = _get_credentials()
-    if not creds["api_key"] or not creds["client_code"] or not creds["totp_secret"]:
-        logger.warning("[ANGEL ONE] Missing credentials. Cannot generate session.")
+    if not creds["api_key"] or not creds["client_code"] or not creds["mpin"] or not creds["totp_secret"]:
+        logger.warning("[ANGEL ONE] Missing credentials in .env/environment. Cannot generate session.")
         return None
 
     try:
@@ -61,9 +61,8 @@ def get_smart_connect():
 
         totp_code = pyotp.TOTP(secret).now()
         smart_api = SmartConnect(api_key=creds["api_key"])
-        
-        # Override IP for EC2 / local
-        ec2_ip = getattr(config, "EC2_PUBLIC_IP", "13.207.161.15")
+
+        ec2_ip = getattr(config, "EC2_PUBLIC_IP", "3.104.77.17")
         smart_api.clientPublicIp = ec2_ip
         smart_api.clientLocalIp = ec2_ip
 
@@ -91,7 +90,7 @@ def get_broker_status() -> Dict[str, Any]:
         return {
             "broker": "Angel One SmartAPI",
             "connected": False,
-            "client_code": creds["client_code"],
+            "client_code": creds["client_code"] or "NOT_SET",
             "profile_name": "Disconnected",
             "paper_trading_locked": getattr(config, "PAPER_TRADING_MODE", True),
             "status_text": "DISCONNECTED (Session Not Active)"
@@ -113,7 +112,7 @@ def get_broker_status() -> Dict[str, Any]:
         return {
             "broker": "Angel One SmartAPI",
             "connected": False,
-            "client_code": creds["client_code"],
+            "client_code": creds["client_code"] or "NOT_SET",
             "profile_name": "Error",
             "paper_trading_locked": getattr(config, "PAPER_TRADING_MODE", True),
             "status_text": f"ERROR ({e})"
@@ -154,13 +153,16 @@ def route_order_to_broker(trade_params: Dict[str, Any]) -> Dict[str, Any]:
             "message": "Paper Trading active. Order safely executed on virtual ledger."
         }
 
+    if not getattr(config, "ALLOW_LIVE_ORDERS", False):
+        logger.error("[ANGEL ONE] LIVE ORDER BLOCKED: exit/SL routing not implemented (set IRON_BOT_ALLOW_LIVE_ORDERS=1 only after full exit routing).")
+        return {"status": "BLOCKED", "message": "Live routing disabled by safety switch"}
+
     # Live Mode Execution (Guarded by double confirmation)
     smart_api = get_smart_connect()
     if not smart_api:
         logger.error("[ANGEL ONE] Cannot route live order: SmartAPI not connected!")
         return {"status": "ERROR", "message": "Broker not connected"}
 
-    # Place live order with Angel One SmartAPI
     try:
         order_params = {
             "variety": "NORMAL",
@@ -189,11 +191,11 @@ def run_8am_handshake(force: bool = False) -> Dict[str, Any]:
     logger.info("[ANGEL 8AM] Running pre-market broker handshake check...")
     status = get_broker_status()
     stats = database.get_today_stats()
-    
+
     trade_count = stats.get("trade_count", 0)
     max_trades = getattr(config, "get_max_daily_trades", lambda: getattr(config, "MAX_DAILY_TRADES", 4))()
     max_loss = getattr(config, "get_max_daily_loss", lambda: getattr(config, "MAX_DAILY_LOSS_RUPEES", 2500))()
-    
+
     macro_info = "Neutral"
     vix_val = "15.0"
     try:
@@ -206,7 +208,7 @@ def run_8am_handshake(force: bool = False) -> Dict[str, Any]:
 
     if status.get("connected"):
         name = status.get("profile_name", "CHIRAG RAVAT")
-        client = status.get("client_code", "C51977841")
+        client = status.get("client_code", "")
         msg = (
             "🌅 *8:00 AM PRE-MARKET BRIEFING: GREEN*\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
@@ -228,11 +230,10 @@ def run_8am_handshake(force: bool = False) -> Dict[str, Any]:
             "🚨 *8:00 AM PRE-MARKET WARNING: BROKER DISCONNECTED*\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "❌ Angel One SmartAPI failed to connect via TOTP!\n"
-            "Please check API Key and MPIN settings in config.\n"
+            "Please check API Key and MPIN settings in .env.\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "⚠️ Operating in offline paper mode."
         )
         import telegram_notifier
         telegram_notifier.send_telegram_alert(msg)
         return {"status": "DISCONNECTED", "connected": False}
-

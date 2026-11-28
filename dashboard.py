@@ -13,6 +13,7 @@ Features:
 """
 
 import json
+import os
 import re
 from datetime import datetime, time
 from typing import Dict, Any, List
@@ -22,6 +23,7 @@ import macro_radar
 import option_chain_shield
 import angel_connector
 import paper_engine
+import risk_manager
 
 def get_live_dashboard_state() -> Dict[str, Any]:
     """Aggregates real-time engine, market, and ledger state with 0-crash guarantee."""
@@ -33,9 +35,9 @@ def get_live_dashboard_state() -> Dict[str, Any]:
     is_market_hours = config.MARKET_START_TIME <= current_t <= config.MARKET_END_TIME
     is_euro_blackout = config.EURO_BLACKOUT_START <= current_t <= config.EURO_BLACKOUT_END
 
-    # 1. Database Stats
+    # 1. Database Stats (full campaign history for accurate ledger metrics)
     today_stats = database.get_today_stats()
-    all_trades = database.get_all_trades(50)
+    all_trades = database.get_all_trades(10000)
     active_trade = database.get_active_trade()
 
     # 2. Ledger Analytics
@@ -59,7 +61,7 @@ def get_live_dashboard_state() -> Dict[str, Any]:
     active_payload = None
     if active_trade:
         symbol = active_trade["symbol"]
-        is_call = "CE" in symbol
+        is_call = not risk_manager._is_put_signal(symbol)
         spot = float(active_trade.get("spot_price", 25050.0))
         entry = float(active_trade["entry_price"])
         qty = int(active_trade.get("quantity", config.DEFAULT_LOT_SIZE))
@@ -70,10 +72,19 @@ def get_live_dashboard_state() -> Dict[str, Any]:
         strike_match = re.search(r'NIFTY(\d+)', symbol)
         held_strike = int(strike_match.group(1)) if strike_match else round(spot / 50.0) * 50
         
+        feed_ok = True
         try:
             quote = option_chain_shield.get_option_quote_by_strike(held_strike, is_call, spot_price=spot)
-            live_ltp = float(quote.get("ltp") or entry)
+            q_ltp = float(quote.get("ltp") or 0.0)
+            q_sim = bool(quote.get("is_simulated", False))
+            q_stale = bool(quote.get("is_stale", False))
+            if q_ltp <= 0.0 or (os.environ.get("IRON_BOT_TEST_MODE") != "1" and (q_sim or q_stale)):
+                feed_ok = False
+                live_ltp = entry
+            else:
+                live_ltp = q_ltp
         except Exception:
+            feed_ok = False
             live_ltp = entry
             
         pnl_pts = round(live_ltp - entry, 2)
@@ -97,6 +108,7 @@ def get_live_dashboard_state() -> Dict[str, Any]:
             "sl_price": sl,
             "target_price": target,
             "live_ltp": live_ltp,
+            "feed_ok": feed_ok,
             "pnl_points": pnl_pts,
             "pnl_rupees": pnl_rupees,
             "sl_dist": sl_dist,
@@ -138,7 +150,7 @@ def get_live_dashboard_state() -> Dict[str, Any]:
     try:
         angel_info = angel_connector.get_broker_status()
     except Exception:
-        angel_info = {"broker": "Angel One", "connected": False, "client_code": "C51977841", "status_text": "OFFLINE"}
+        angel_info = {"broker": "Angel One", "connected": False, "client_code": os.environ.get("ANGEL_CLIENT_CODE", "NOT_SET"), "status_text": "OFFLINE"}
 
     # 7. Dynamic Greeks Parameters Breakdown
     vix = 13.5
@@ -1756,19 +1768,51 @@ def render_dashboard_html() -> str:
             await loadCandleData();
         }
 
+        // Auth header helpers for protected mutating API routes
+        function getIronKey(forcePrompt = false) {
+            let key = localStorage.getItem('iron_bot_secret') || '';
+            if (!key && forcePrompt) {
+                key = (prompt('Enter Iron Bot Secret Key (X-Iron-Secret):') || '').trim();
+                if (key) localStorage.setItem('iron_bot_secret', key);
+            }
+            return key;
+        }
+
+        function ironHeaders(includeJson = true, forcePrompt = false) {
+            const headers = includeJson ? { 'Content-Type': 'application/json' } : {};
+            const key = getIronKey(forcePrompt);
+            if (key) headers['X-Iron-Secret'] = key;
+            return headers;
+        }
+
+        async function postProtected(url, bodyObj = null) {
+            const hasBody = bodyObj !== null;
+            let res = await fetch(url, {
+                method: 'POST',
+                headers: ironHeaders(hasBody, false),
+                body: hasBody ? JSON.stringify(bodyObj) : undefined
+            });
+            if (res.status === 401) {
+                localStorage.removeItem('iron_bot_secret');
+                getIronKey(true);
+                res = await fetch(url, {
+                    method: 'POST',
+                    headers: ironHeaders(hasBody, false),
+                    body: hasBody ? JSON.stringify(bodyObj) : undefined
+                });
+            }
+            return res;
+        }
+
         // Interactive Sandbox Controls (₹0 Real Money at Risk)
         async function triggerSimulateOrder(action, strike = 25200, price = 200.0) {
             try {
-                const res = await fetch('/simulate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        signal: action,
-                        spot: 25150.0,
-                        entry_price: price,
-                        candle_low: price - 10.0,
-                        is_test: true
-                    })
+                const res = await postProtected('/simulate', {
+                    signal: action,
+                    spot: 25150.0,
+                    entry_price: price,
+                    candle_low: price - 10.0,
+                    is_test: true
                 });
                 const data = await res.json();
                 console.log('Simulate triggered:', data);
@@ -1780,11 +1824,7 @@ def render_dashboard_html() -> str:
 
         async function triggerSquareOff() {
             try {
-                const res = await fetch('/webhook', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ signal: 'EXIT' })
-                });
+                const res = await postProtected('/webhook', { signal: 'EXIT' });
                 const data = await res.json();
                 console.log('Square off triggered:', data);
                 await syncLiveState();
@@ -1801,11 +1841,7 @@ def render_dashboard_html() -> str:
                     currentLtp = parseFloat(pEl.innerText.replace(/[^0-9.]+/g, '')) || 200.0;
                 }
                 const newPrice = Math.max(1.0, currentLtp + deltaPts);
-                const res = await fetch('/tick', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ price: newPrice })
-                });
+                const res = await postProtected('/tick', { price: newPrice });
                 const data = await res.json();
                 console.log('Tick simulated:', data);
                 await syncLiveState();
@@ -1816,7 +1852,7 @@ def render_dashboard_html() -> str:
 
         async function triggerResetLimits() {
             try {
-                const res = await fetch('/reset', { method: 'POST' });
+                const res = await postProtected('/reset');
                 const data = await res.json();
                 alert('✅ Daily Tracker & Active Trades reset for fresh testing!');
                 await syncLiveState();
@@ -1828,9 +1864,9 @@ def render_dashboard_html() -> str:
         async function triggerResetWallet() {
             if (!confirm('Start fresh 30-Day Campaign with strict ₹1,00,000 INR wallet cap starting today?')) return;
             try {
-                const res = await fetch('/reset_wallet', { method: 'POST' });
+                const res = await postProtected('/reset_wallet');
                 const data = await res.json();
-                alert('💼 ' + (data.message || '30-Day Campaign initialized with ₹50,000 INR cap!'));
+                alert('💼 ' + (data.message || '30-Day Campaign initialized with ₹1,00,000 INR cap!'));
                 await syncLiveState();
             } catch (e) {
                 alert('Wallet reset error: ' + e);
@@ -1925,7 +1961,8 @@ def render_dashboard_html() -> str:
                     brokerPill.innerText = 'ANGEL ONE: ' + data.broker.client_code + ' (ONLINE)';
                     brokerPill.className = 'pill pill-green';
                 } else {
-                    brokerPill.innerText = 'ANGEL ONE: C51977841 (ARMED)';
+                    const code = (data.broker && data.broker.client_code) ? data.broker.client_code : 'OFFLINE';
+                    brokerPill.innerText = 'ANGEL ONE: ' + code + ' (ARMED)';
                     brokerPill.className = 'pill pill-blue';
                 }
 

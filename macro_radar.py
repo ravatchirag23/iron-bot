@@ -19,6 +19,8 @@ import ssl
 import time
 import html
 import re
+import os
+import threading
 from typing import Dict, Any, Tuple, List
 import telegram_notifier
 import config
@@ -26,6 +28,7 @@ import database
 
 logger = logging.getLogger("IronBot.MacroRadar")
 
+_cache_lock = threading.Lock()
 _cached_macro = None
 _last_macro_time = 0.0
 MACRO_CACHE_TTL = 30.0 # 30-second cache: eliminates Yahoo 429 rate limits on EC2 while preserving live feel
@@ -41,8 +44,9 @@ _candles_cache = {}
 _candles_cache_time = {}
 
 _ssl_ctx = ssl.create_default_context()
-_ssl_ctx.check_hostname = False
-_ssl_ctx.verify_mode = ssl.CERT_NONE
+if os.environ.get("IRON_BOT_INSECURE_SSL") == "1":
+    _ssl_ctx.check_hostname = False
+    _ssl_ctx.verify_mode = ssl.CERT_NONE
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -55,8 +59,9 @@ def fetch_cnbc_news() -> List[Dict[str, str]]:
     """
     global _cached_news, _last_news_time
     now = time.time()
-    if _cached_news and (now - _last_news_time) < NEWS_CACHE_TTL:
-        return _cached_news
+    with _cache_lock:
+        if _cached_news and (now - _last_news_time) < NEWS_CACHE_TTL:
+            return list(_cached_news)
     try:
         url = "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20409666"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -74,14 +79,16 @@ def fetch_cnbc_news() -> List[Dict[str, str]]:
                 if title:
                     parsed.append({"title": title, "pubDate": pub, "link": link})
             if parsed:
-                _cached_news = parsed
-                _last_news_time = now
+                with _cache_lock:
+                    _cached_news = parsed
+                    _last_news_time = now
                 return parsed
     except Exception as e:
         logger.warning(f"CNBC RSS news fetch warning: {e}")
-    return _cached_news or [
-        {"title": "GIFT Nifty signals steady momentum with +0.38% lead over weekend.", "pubDate": "Live", "link": "#"},
-        {"title": "Brent crude steady at $96.08 as global currency and bond markets consolidate.", "pubDate": "Live", "link": "#"}
+    with _cache_lock:
+        cached = list(_cached_news) if _cached_news else None
+    return cached or [
+        {"title": "GIFT Nifty feed temporarily unavailable — awaiting next update.", "pubDate": "Cached", "link": "#"}
     ]
 
 def fetch_candles(ticker: str = "^NSEI", interval: str = "5m", range_param: str = "2d") -> List[Dict[str, Any]]:
@@ -114,8 +121,9 @@ def fetch_candles(ticker: str = "^NSEI", interval: str = "5m", range_param: str 
 
     cache_key = f"{resolved_ticker}_{interval}_{range_param}"
     now = time.time()
-    if cache_key in _candles_cache and (now - _candles_cache_time.get(cache_key, 0)) < 20.0:
-        return _candles_cache[cache_key]
+    with _cache_lock:
+        if cache_key in _candles_cache and (now - _candles_cache_time.get(cache_key, 0)) < 20.0:
+            return list(_candles_cache[cache_key])
 
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{resolved_ticker}?interval={interval}&range={range_param}"
@@ -143,12 +151,14 @@ def fetch_candles(ticker: str = "^NSEI", interval: str = "5m", range_param: str 
                         "volume": int(volumes[i] or 0)
                     })
             if candles:
-                _candles_cache[cache_key] = candles
-                _candles_cache_time[cache_key] = now
+                with _cache_lock:
+                    _candles_cache[cache_key] = candles
+                    _candles_cache_time[cache_key] = now
                 return candles
     except Exception as e:
         logger.warning(f"Candles fetch for {ticker} failed: {e}")
-    return _candles_cache.get(cache_key, [])
+    with _cache_lock:
+        return list(_candles_cache.get(cache_key, []))
 
 def fetch_yahoo_quote(ticker: str) -> Tuple[float, float]:
     """
@@ -243,7 +253,7 @@ def fetch_gift_nifty() -> Tuple[float, float]:
     except Exception:
         pass
 
-    return 25266.0, 0.38
+    return 0.0, 0.0
 
 def get_macro_sentiment(force: bool = False) -> Dict[str, Any]:
     """
@@ -256,27 +266,28 @@ def get_macro_sentiment(force: bool = False) -> Dict[str, Any]:
     - India VIX (^INDIAVIX)
     - NIFTY 50 Spot (^NSEI)
     """
-    import os
     if os.environ.get("IRON_BOT_TEST_MODE") == "1":
         return {
             "score": 0,
             "sentiment": "NEUTRAL",
+            "bias": "⚪ NEUTRAL / BALANCED",
+            "advisory": "Test Mode Active",
             "reason": "Test Mode Mock",
-            "gift_nifty": {"price": 25200.0, "change_pct": 0.0},
-            "dow": {"price": 44000.0, "change_pct": 0.0},
-            "nasdaq": {"price": 19000.0, "change_pct": 0.0},
-            "crude": {"price": 75.0, "change_pct": 0.0},
-            "usdinr": {"price": 84.5, "change_pct": 0.0},
-            "vix": {"price": 14.5, "change_pct": 0.0},
-            "nifty": {"price": 25200.0, "change_pct": 0.0},
+            "gift_nifty": {"price": 25200.0, "change": 0.0, "change_pct": 0.0},
+            "dow": {"price": 44000.0, "change": 0.0, "change_pct": 0.0},
+            "nasdaq": {"price": 19000.0, "change": 0.0, "change_pct": 0.0},
+            "crude": {"price": 75.0, "change": 0.0, "change_pct": 0.0},
+            "usdinr": {"price": 84.5, "change": 0.0, "change_pct": 0.0},
+            "vix": {"price": 14.5, "change": 0.0, "change_pct": 0.0, "regime": "NORMAL"},
+            "nifty": {"price": 25200.0, "change": 0.0, "change_pct": 0.0},
             "factors": ["Test Mode Active"]
         }
 
     global _cached_macro, _last_macro_time
-    import time
     now = time.time()
-    if not force and _cached_macro and (now - _last_macro_time) < MACRO_CACHE_TTL:
-        return _cached_macro
+    with _cache_lock:
+        if not force and _cached_macro and (now - _last_macro_time) < MACRO_CACHE_TTL:
+            return _cached_macro
 
     gift_price, gift_chg = fetch_gift_nifty()
     dow_price, dow_chg = fetch_yahoo_quote("%5EDJI")
@@ -289,31 +300,22 @@ def get_macro_sentiment(force: bool = False) -> Dict[str, Any]:
     score = 0
     factors = []
 
-    # 1. GIFT Nifty (Offshore Price Discovery Lead) — Max ±30 pts
+    # 1. GIFT Nifty (Percentage Change vs Own Previous Close — avoids futures-vs-spot basis distortion) — Max ±30 pts
     if gift_price > 0:
-        if nifty_price > 0:
-            gift_gap = round(gift_price - nifty_price, 1)
-            if gift_gap >= 50.0:
-                score += 30
-                factors.append(f"GIFT Nifty Gap-Up Lead (+{gift_gap} pts) (+30)")
-            elif gift_gap >= 20.0:
-                score += 15
-                factors.append(f"GIFT Nifty Mild Gap-Up (+{gift_gap} pts) (+15)")
-            elif gift_gap <= -50.0:
-                score -= 30
-                factors.append(f"GIFT Nifty Gap-Down Lead ({gift_gap} pts) (-30)")
-            elif gift_gap <= -20.0:
-                score -= 15
-                factors.append(f"GIFT Nifty Mild Gap-Down ({gift_gap} pts) (-15)")
-            else:
-                factors.append(f"GIFT Nifty Flat Gap ({gift_gap:+} pts) (0)")
+        if gift_chg >= 0.50:
+            score += 30
+            factors.append(f"GIFT Nifty Strong Lead ({gift_chg:+.2f}%) (+30)")
+        elif gift_chg >= 0.20:
+            score += 15
+            factors.append(f"GIFT Nifty Mild Lead ({gift_chg:+.2f}%) (+15)")
+        elif gift_chg <= -0.50:
+            score -= 30
+            factors.append(f"GIFT Nifty Sharp Drag ({gift_chg:+.2f}%) (-30)")
+        elif gift_chg <= -0.20:
+            score -= 15
+            factors.append(f"GIFT Nifty Mild Drag ({gift_chg:+.2f}%) (-15)")
         else:
-            if gift_chg >= 0.4:
-                score += 25
-                factors.append(f"GIFT Nifty Overnight Surge (+{gift_chg}%) (+25)")
-            elif gift_chg <= -0.4:
-                score -= 25
-                factors.append(f"GIFT Nifty Overnight Slide ({gift_chg}%) (-25)")
+            factors.append(f"GIFT Nifty Flat ({gift_chg:+.2f}%) (0)")
 
     # 2. US Markets Weight — Max ±25 pts
     us_avg = (dow_chg + nas_chg) / 2.0 if (dow_chg and nas_chg) else (dow_chg or nas_chg or 0.0)
@@ -385,21 +387,23 @@ def get_macro_sentiment(force: bool = False) -> Dict[str, Any]:
         bias = "⚪ NEUTRAL / BALANCED"
         advisory = "No strong macro edge. Follow pure UT Bot Dual-Trigger with strict 7 pt Micro-SL."
 
-    _cached_macro = {
+    macro_payload = {
         "score": score,
         "bias": bias,
         "advisory": advisory,
-        "gift_nifty": {"price": gift_price, "change": gift_chg},
-        "dow": {"price": dow_price, "change": dow_chg},
-        "nasdaq": {"price": nas_price, "change": nas_chg},
-        "crude": {"price": crude_price, "change": crude_chg},
-        "usdinr": {"price": usdinr_price, "change": usdinr_chg},
-        "vix": {"price": vix_price, "change": vix_chg, "regime": vix_regime},
-        "nifty": {"price": nifty_price, "change": nifty_chg},
+        "gift_nifty": {"price": gift_price, "change": gift_chg, "change_pct": gift_chg},
+        "dow": {"price": dow_price, "change": dow_chg, "change_pct": dow_chg},
+        "nasdaq": {"price": nas_price, "change": nas_chg, "change_pct": nas_chg},
+        "crude": {"price": crude_price, "change": crude_chg, "change_pct": crude_chg},
+        "usdinr": {"price": usdinr_price, "change": usdinr_chg, "change_pct": usdinr_chg},
+        "vix": {"price": vix_price, "change": vix_chg, "change_pct": vix_chg, "regime": vix_regime},
+        "nifty": {"price": nifty_price, "change": nifty_chg, "change_pct": nifty_chg},
         "factors": factors
     }
-    _last_macro_time = now
-    return _cached_macro
+    with _cache_lock:
+        _cached_macro = macro_payload
+        _last_macro_time = now
+        return _cached_macro
 
 def send_morning_briefing() -> bool:
     """Sends formatted Pre-Market Cockpit briefing to Telegram."""

@@ -6,6 +6,8 @@ Simulates order fills, tracks active position, moves trailing SL, and manages ex
 
 import threading
 import logging
+import re
+import sqlite3
 from typing import Dict, Any, Optional
 from datetime import datetime
 import config
@@ -14,11 +16,31 @@ import telegram_notifier
 
 logger = logging.getLogger("IronBot.PaperEngine")
 
+
+def _derive_milestone(trade: Optional[Dict[str, Any]]) -> int:
+    """Reconstructs highest reached trailing milestone from DB trade state after restart."""
+    if not trade:
+        return 0
+    entry = float(trade.get("entry_price") or 0.0)
+    sl = float(trade.get("sl_price") or 0.0)
+    if entry <= 0.0 or sl <= 0.0:
+        return 0
+    soft_buffer = float(getattr(config, "SOFT_SL_BUFFER_POINTS", 6.0))
+    if bool(trade.get("is_runner", 0)) and sl >= round(entry + 8.0, 2) - 1e-6:
+        return 3
+    if sl >= entry - 1e-6:
+        return 2
+    init_sl = float(trade.get("initial_sl_price") or 0.0)
+    if sl >= round(entry - soft_buffer, 2) - 1e-6 and (init_sl <= 0.0 or sl > init_sl):
+        return 1
+    return 0
+
+
 class PaperTradingEngine:
     def __init__(self):
         self.lock = threading.RLock()
         self.active_trade = database.get_active_trade()
-        self.milestone_reached = 0
+        self.milestone_reached = _derive_milestone(self.active_trade)
         self.initial_sl_dist = 0.0
         if self.active_trade:
             entry = float(self.active_trade.get("entry_price", 0.0))
@@ -27,21 +49,35 @@ class PaperTradingEngine:
 
     def sync_state(self):
         with self.lock:
+            prev_id = self.active_trade.get("id") if self.active_trade else None
             self.active_trade = database.get_active_trade()
-            if self.active_trade and self.initial_sl_dist <= 0.0:
+            if not self.active_trade:
+                self.initial_sl_dist = 0.0
+                self.milestone_reached = 0
+                return
+            new_id = self.active_trade.get("id")
+            if new_id != prev_id or self.initial_sl_dist <= 0.0:
                 entry = float(self.active_trade.get("entry_price", 0.0))
                 base_sl = float(self.active_trade.get("initial_sl_price") or self.active_trade.get("sl_price", 0.0))
                 self.initial_sl_dist = max(5.0, abs(entry - base_sl))
+            if new_id != prev_id or self.milestone_reached == 0:
+                self.milestone_reached = max(self.milestone_reached, _derive_milestone(self.active_trade))
 
     def process_entry(self, trade_params: Dict[str, Any], oi_advisory: str = "") -> int:
-        """Executes a virtual trade entry and sends Telegram notification."""
+        """Executes a virtual trade entry atomically and sends Telegram notification."""
         with self.lock:
             entry_px = float(trade_params["entry_price"])
             init_sl = float(trade_params["sl_price"])
             trade_params["initial_sl_price"] = init_sl
             self.initial_sl_dist = max(5.0, abs(entry_px - init_sl))
-            
-            trade_id = database.record_trade_entry(trade_params)
+
+            try:
+                trade_id = database.record_trade_entry(trade_params)
+            except sqlite3.IntegrityError as e:
+                logger.warning(f"Blocked duplicate concurrent trade entry: {e}")
+                self.sync_state()
+                return -1
+
             self.active_trade = database.get_active_trade()
             self.milestone_reached = 0
 
@@ -140,45 +176,35 @@ class PaperTradingEngine:
             except Exception:
                 pass
 
-            # 1. Target Hit & Runner Trailing Extension
+            # 1. Target Hit & Runner Trailing Extension (supports multi-step gap ratchets)
             is_runner = bool(trade.get("is_runner", 0))
+            universal_trailing = getattr(config, "get_enable_universal_trailing", lambda: getattr(config, "ENABLE_UNIVERSAL_TRAILING", False))()
 
-            if is_runner and current_price >= target:
-                # Trailing Target Extension for Trend Runners (Confluence days)
-                # Extend target by +10 pts and tighten trailing SL to lock profit
-                old_target = target
-                new_target = round(target + 10.0, 2)
-                new_sl = round(max(sl, target - 3.0), 2)
-                self._update_target(trade_id, new_target)
-                self._update_sl(trade_id, new_sl)
-                trade["target_price"] = new_target
-                trade["sl_price"] = new_sl
-                sl = new_sl
-                target = new_target
-                self.milestone_reached = max(self.milestone_reached, 3)
-                locked_pts = round(new_sl - entry, 1)
-                tag = f"🚀 RUNNER EXTENSION: Hit ₹{old_target:.2f}! Trailing Target extended to ₹{new_target:.2f} (SL locked @ ₹{new_sl:.2f} | +{locked_pts} pts profit)"
-                telegram_notifier.notify_trailing_update(symbol, tag, new_sl, locked_pts * qty)
-            elif not is_runner and current_price >= target:
-                universal_trailing = getattr(config, "get_enable_universal_trailing", lambda: getattr(config, "ENABLE_UNIVERSAL_TRAILING", False))()
-                if universal_trailing:
-                    old_target = target
-                    new_target = round(target + 10.0, 2)
-                    new_sl = round(max(sl, target - 3.0), 2)
-                    self._update_target(trade_id, new_target)
-                    self._update_sl(trade_id, new_sl)
-                    with database.db_session() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("UPDATE trades SET is_runner = 1 WHERE id = ?", (trade_id,))
-                    trade["target_price"] = new_target
-                    trade["sl_price"] = new_sl
-                    trade["is_runner"] = 1
-                    sl = new_sl
-                    target = new_target
+            if current_price >= target:
+                if is_runner or universal_trailing:
+                    first_old_target = target
+                    steps = 0
+                    while current_price >= target and steps < 20:
+                        new_target = round(target + 10.0, 2)
+                        new_sl = round(max(sl, target - 3.0), 2)
+                        sl = new_sl
+                        target = new_target
+                        steps += 1
+                    self._update_target(trade_id, target)
+                    self._update_sl(trade_id, sl)
+                    if not is_runner and universal_trailing:
+                        with database.db_session() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute("UPDATE trades SET is_runner = 1 WHERE id = ?", (trade_id,))
+                        trade["is_runner"] = 1
+                        is_runner = True
+                    trade["target_price"] = target
+                    trade["sl_price"] = sl
                     self.milestone_reached = max(self.milestone_reached, 3)
-                    locked_pts = round(new_sl - entry, 1)
-                    tag = f"🚀 UNIVERSAL TRAIL: Hit ₹{old_target:.2f}! Target extended to ₹{new_target:.2f} (Profit locked @ ₹{new_sl:.2f} | +{locked_pts} pts guaranteed)"
-                    telegram_notifier.notify_trailing_update(symbol, tag, new_sl, locked_pts * qty)
+                    locked_pts = round(sl - entry, 1)
+                    prefix = "🚀 UNIVERSAL TRAIL" if universal_trailing and steps == 1 else "🚀 RUNNER EXTENSION"
+                    tag = f"{prefix}: Hit ₹{first_old_target:.2f}! Trailing Target extended to ₹{target:.2f} (SL locked @ ₹{sl:.2f} | +{locked_pts} pts profit)"
+                    telegram_notifier.notify_trailing_update(symbol, tag, sl, locked_pts * qty)
                 else:
                     # Fixed Target Exit (Hit & Run for Normal/Chop days)
                     bid_exit = round(target - config.BID_ASK_FRICTION_POINTS, 2)
@@ -198,6 +224,10 @@ class PaperTradingEngine:
                 # Allows realistic market slippage (3-5 pts) while blocking upstream API glitch crashes (e.g. 80-pt phantom drops)
                 max_slip = getattr(config, "MAX_SLIPPAGE_POINTS", 15.0)
                 clamped_price = max(sl - max_slip, current_price)
+                if current_price < (sl - max_slip):
+                    logger.warning(
+                        f"SL gap slippage clamped for {symbol}: tick ₹{current_price:.2f} -> ₹{clamped_price:.2f} (SL=₹{sl:.2f}, max_slip={max_slip})"
+                    )
                 actual_exit = min(clamped_price, sl)
                 bid_exit = round(actual_exit - config.BID_ASK_FRICTION_POINTS, 2)
                 pnl_pts = round(bid_exit - entry, 2)
@@ -216,49 +246,47 @@ class PaperTradingEngine:
                 self.milestone_reached = 0
                 return {"status": "CLOSED", "reason": reason, "pnl_rupees": pnl_rupees}
 
-            # 3. Reality-Proof 3-Stage Trailing Protection
+            # 3. Sequential Non-Starving Trailing Protection (Milestones 1 -> 2 -> 3 -> 4)
             soft_trigger = getattr(config, "SOFT_SL_TRIGGER_POINTS", 7.5)
             soft_buffer = getattr(config, "SOFT_SL_BUFFER_POINTS", 6.0)
             cost_trigger = getattr(config, "COST_LOCK_TRIGGER_POINTS", 11.0)
 
-            # Milestone 2: True Cost Lock (At +11.0 pts gain -> Move SL to Cost)
-            # Slashes risk to absolute zero once trade develops confirmed momentum
-            if gain >= cost_trigger and self.milestone_reached < 2:
-                new_sl = entry
-                if new_sl > sl:
-                    self._update_sl(trade_id, new_sl)
-                    trade["sl_price"] = new_sl
-                    sl = new_sl
-                    self.milestone_reached = 2
-                    tag = f"+{gain:.1f} pts (Cost Lock - Runner Active)" if is_runner else f"🔒 COST LOCK: +{gain:.1f} pts gain! SL locked at ₹{new_sl:.2f} (Risk-Free Ride)"
-                    telegram_notifier.notify_trailing_update(symbol, tag, new_sl, 0.0)
-
             # Milestone 1: Soft Risk Buffer (At +7.5 pts gain -> Tighten SL to Entry - 6.0 pts)
-            # Slashes risk by 60% while giving 6 pts breathing room for 2-tick pullback wicks
-            elif gain >= soft_trigger and self.milestone_reached < 1:
+            if gain >= soft_trigger and self.milestone_reached < 1:
+                self.milestone_reached = 1
                 new_sl = round(entry - soft_buffer, 2)
-                if new_sl > sl:
+                if gain < cost_trigger and new_sl > sl:
                     self._update_sl(trade_id, new_sl)
                     trade["sl_price"] = new_sl
                     sl = new_sl
-                    self.milestone_reached = 1
                     tag = f"🛡️ SOFT RISK BUFFER: +{gain:.1f} pts gain! SL moved to ₹{new_sl:.2f} (Risk slashed 60%, 6 pt breathing room preserved)"
                     telegram_notifier.notify_trailing_update(symbol, tag, new_sl, 0.0)
 
+            # Milestone 2: True Cost Lock (At +11.0 pts gain -> Move SL to Cost)
+            if gain >= cost_trigger and self.milestone_reached < 2:
+                self.milestone_reached = 2
+                new_sl = entry
+                if new_sl > sl and not (is_runner and gain >= 18.0):
+                    self._update_sl(trade_id, new_sl)
+                    trade["sl_price"] = new_sl
+                    sl = new_sl
+                    tag = f"+{gain:.1f} pts (Cost Lock - Runner Active)" if is_runner else f"🔒 COST LOCK: +{gain:.1f} pts gain! SL locked at ₹{new_sl:.2f} (Risk-Free Ride)"
+                    telegram_notifier.notify_trailing_update(symbol, tag, new_sl, 0.0)
+
             # Milestone 3: Profit Lock for Confluence Trend Runners (At +18 pts -> Lock +8 pts)
-            elif is_runner and gain >= 18.0 and self.milestone_reached < 3:
+            if is_runner and gain >= 18.0 and self.milestone_reached < 3:
+                self.milestone_reached = 3
                 locked_pts = 8.0
                 new_sl = round(entry + locked_pts, 2)
                 if new_sl > sl:
                     self._update_sl(trade_id, new_sl)
                     trade["sl_price"] = new_sl
                     sl = new_sl
-                    self.milestone_reached = 3
                     tag = f"🏃 RUNNER: Giant Momentum! Locked +{locked_pts} pts profit @ ₹{new_sl:.2f}"
                     telegram_notifier.notify_trailing_update(symbol, tag, new_sl, locked_pts * qty)
 
             # Milestone 4+: Ratchet Trailing for Mega Trend Runners (Gain >= 20.0 pts)
-            elif is_runner and gain >= 20.0:
+            if is_runner and gain >= 20.0:
                 offset = getattr(config, "RUNNER_TRAIL_OFFSET_POINTS", 10.0)
                 dynamic_sl = round(current_price - offset, 2)
                 if dynamic_sl > (sl + 2.0): # Step up whenever price moves 2+ pts higher
@@ -267,9 +295,9 @@ class PaperTradingEngine:
                     sl = dynamic_sl
                     locked_gain = round(dynamic_sl - entry, 1)
                     telegram_notifier.notify_trailing_update(
-                        symbol, 
-                        f"🌊 RUNNER SURFING: +{gain:.1f} pts! Trailing SL raised to ₹{dynamic_sl:.2f} (Locking +{locked_gain} pts)", 
-                        dynamic_sl, 
+                        symbol,
+                        f"🌊 RUNNER SURFING: +{gain:.1f} pts! Trailing SL raised to ₹{dynamic_sl:.2f} (Locking +{locked_gain} pts)",
+                        dynamic_sl,
                         locked_gain * qty
                     )
 
@@ -295,10 +323,9 @@ class PaperTradingEngine:
         entry = float(trade.get("entry_price", 200.0))
         entry_spot = float(trade.get("spot_price", fallback_spot or 25050.0))
         current_spot = float(fallback_spot) if (fallback_spot and fallback_spot > 5000.0) else entry_spot
-        is_call = "CE" in symbol
+        is_call = not bool(re.search(r"\d+PE|(?:^|[^A-Z])(PE|PUT)(?:$|[^A-Z])", symbol.upper()))
         
         # Extract held strike
-        import re
         strike_match = re.search(r'NIFTY(\d+)', symbol)
         held_strike = int(strike_match.group(1)) if strike_match else round(current_spot / 50.0) * 50
         
@@ -317,7 +344,7 @@ class PaperTradingEngine:
         est = round(max(1.0, entry + (delta * spot_chg) - config.BID_ASK_FRICTION_POINTS), 2)
         return est
 
-    def force_exit(self, exit_price: Optional[float] = None, reason: str = "MANUAL_EXIT") -> Dict[str, Any]:
+    def force_exit(self, exit_price: Optional[float] = None, reason: str = "MANUAL_EXIT", current_spot: Optional[float] = None) -> Dict[str, Any]:
         """Force exits active trade with automatic spot-vs-option sanity validation."""
         with self.lock:
             self.sync_state()
@@ -331,7 +358,8 @@ class PaperTradingEngine:
             # Sanity Guardrail: If exit_price is accidentally passed as spot price (> 5000),
             # non-positive (<= 0), or omitted, automatically resolve real option quote or delta estimate!
             if exit_price is None or exit_price > 5000.0 or exit_price <= 0.0:
-                exit_price = self._resolve_option_exit_price(trade, fallback_spot=exit_price)
+                fallback_spot = current_spot if current_spot is not None else exit_price
+                exit_price = self._resolve_option_exit_price(trade, fallback_spot=fallback_spot)
                 
             exit_price = round(exit_price, 2)
             pnl_pts = round(exit_price - entry, 2)

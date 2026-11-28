@@ -7,6 +7,7 @@ Runs continuously on Render Cloud, detects 3m candle close flips, and auto-execu
 
 import time
 import logging
+import os
 import urllib.request
 import json
 import ssl
@@ -24,8 +25,23 @@ import option_chain_shield
 logger = logging.getLogger("IronBot.NativeScanner")
 
 _ssl_ctx = ssl.create_default_context()
-_ssl_ctx.check_hostname = False
-_ssl_ctx.verify_mode = ssl.CERT_NONE
+if os.environ.get("IRON_BOT_INSECURE_SSL") == "1":
+    _ssl_ctx.check_hostname = False
+    _ssl_ctx.verify_mode = ssl.CERT_NONE
+
+
+def _todays_open(candles_5m: List[Dict[str, Any]]) -> float:
+    """Returns the open of the first 5m candle belonging to today's IST session, or 0.0 if absent."""
+    if not candles_5m:
+        return 0.0
+    today_str = config.get_today_ist()
+    for c in candles_5m:
+        ts = c.get("time")
+        if ts is None:
+            continue
+        if datetime.fromtimestamp(int(ts), config.IST_TIMEZONE).strftime("%Y-%m-%d") == today_str:
+            return float(c["open"])
+    return 0.0
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -52,6 +68,7 @@ class NativeMarketScanner:
         self.last_pullback_time = 0
         self.last_position = 0 # 1 = Long/CE, -1 = Short/PE
         self.is_running = False
+        self._last_feed_alert_ts = 0.0
 
     def fetch_intraday_candles(self) -> List[Dict[str, float]]:
         """
@@ -208,6 +225,7 @@ class NativeMarketScanner:
         eval_idx = n - 1 if (now_ts >= candles_5m[-1]["time"] + 290) else (n - 2 if n >= 2 else n - 1)
         eval_candle = candles_5m[eval_idx]
         candle_timestamp = eval_candle["time"]
+        day_open = _todays_open(candles_5m)
 
         for i in range(1, n):
             close = candles_5m[i]["close"]
@@ -240,7 +258,6 @@ class NativeMarketScanner:
 
             # Emit signal ONLY on confirmed closed bar!
             # The execution engine checks if already in trade to prevent duplicate entries
-            day_open = float(candles_5m[0]["open"]) if n > 0 else float(close)
             if buy_signal_raw:
                 pos_state = 1
                 if i == eval_idx and candle_timestamp != self.last_candle_time:
@@ -332,11 +349,13 @@ class NativeMarketScanner:
         return pos_state, latest_spot, new_signal
 
     def scan_and_execute_cycle(self):
-        """Single autonomous scan cycle."""
+        """Single autonomous scan cycle with atomic execution lock and feed-down retry."""
         candles = self.fetch_intraday_candles()
         if not candles:
             return
 
+        prev_candle_time = self.last_candle_time
+        prev_pullback_time = getattr(self, "last_pullback_time", 0)
         pos, spot, signal_data = self.evaluate_ut_bot(candles)
         if not signal_data:
             return
@@ -345,46 +364,70 @@ class NativeMarketScanner:
         sig_type = signal_data["signal"]
         logger.info(f"🎯 [AUTONOMOUS ENGINE TRIGGER] Processing native {sig_type} alert...")
 
-        # 1. Check if it's an EXIT command for an existing opposite trade
-        active = database.get_active_trade()
-        if active:
-            active_is_ce = "CE" in active["symbol"]
-            signal_is_pe = "PE" in sig_type
-            if (active_is_ce and signal_is_pe) or (not active_is_ce and not signal_is_pe):
-                logger.info(f"Opposite signal {sig_type} detected for active position #{active['id']}. Forcing reversal exit at market option quote!")
-                paper_engine.engine.force_exit(exit_price=None, reason="UT_BOT_REVERSAL_EXIT")
-                # Position is now closed in DB, proceed to enter opposite direction!
-            else:
-                logger.info(f"Already in active trade #{active['id']} on {active['symbol']}. Ignoring duplicate {sig_type}.")
+        with paper_engine.engine.lock:
+            # 1. Check if it's an EXIT command for an existing opposite trade
+            active = database.get_active_trade()
+            if active:
+                active_is_ce = not risk_manager._is_put_signal(active["symbol"])
+                signal_is_pe = risk_manager._is_put_signal(sig_type)
+                if (active_is_ce and signal_is_pe) or (not active_is_ce and not signal_is_pe):
+                    logger.info(f"Opposite signal {sig_type} detected for active position #{active['id']}. Forcing reversal exit at market option quote!")
+                    paper_engine.engine.force_exit(exit_price=None, reason="UT_BOT_REVERSAL_EXIT", current_spot=spot)
+                    # Position is now closed in DB, proceed to enter opposite direction!
+                else:
+                    logger.info(f"Already in active trade #{active['id']} on {active['symbol']}. Ignoring duplicate {sig_type}.")
+                    return
+
+            # 2. 14 Iron Armor Rules Validation
+            is_approved, reason = risk_manager.validate_signal_armor(signal_data)
+            if not is_approved:
+                if "NO_LIVE_PREMIUM" in reason:
+                    # Feed down: rewind bar dedup timestamps so next 15s cycle can retry once feed recovers
+                    self.last_candle_time = prev_candle_time
+                    self.last_pullback_time = prev_pullback_time
+                    logger.warning(f"[SCANNER] Live feed unavailable for {sig_type}, will retry: {reason}")
+                    now_ts = time.time()
+                    if (now_ts - getattr(self, "_last_feed_alert_ts", 0.0)) >= 300.0:
+                        self._last_feed_alert_ts = now_ts
+                        telegram_notifier.notify_rejection(reason, signal_data)
+                    return
+                logger.warning(f"[SCANNER] Signal {sig_type} rejected by Iron Armor: {reason}")
+                telegram_notifier.notify_rejection(reason, signal_data)
                 return
 
-        # 2. 14 Iron Armor Rules Validation
-        is_approved, reason = risk_manager.validate_signal_armor(signal_data)
-        if not is_approved:
-            logger.warning(f"[SCANNER] Signal {sig_type} rejected by Iron Armor: {reason}")
-            telegram_notifier.notify_rejection(reason, signal_data)
-            return
+            # 3. Calculate Trade Parameters
+            try:
+                trade_params = risk_manager.calculate_trade_parameters(signal_data)
+            except risk_manager.PremiumUnavailableError as e:
+                self.last_candle_time = prev_candle_time
+                self.last_pullback_time = prev_pullback_time
+                logger.warning(f"[SCANNER] Live feed lost before fill for {sig_type}, will retry: {e}")
+                now_ts = time.time()
+                if (now_ts - getattr(self, "_last_feed_alert_ts", 0.0)) >= 300.0:
+                    self._last_feed_alert_ts = now_ts
+                    telegram_notifier.notify_rejection(f"NO_LIVE_PREMIUM: {e}", signal_data)
+                return
 
-        # 3. Calculate Trade Parameters
-        trade_params = risk_manager.calculate_trade_parameters(signal_data)
+            # 4. Loosely Coupled Confluence Advisory
+            oi_advisory = ""
+            try:
+                is_call = not risk_manager._is_put_signal(trade_params["signal_type"])
+                strike = risk_manager.get_atm_strike(trade_params["spot_price"], is_call)
+                oi_eval = option_chain_shield.evaluate_signal_confluence(
+                    trade_params["signal_type"],
+                    trade_params["spot_price"],
+                    strike
+                )
+                oi_advisory = oi_eval.get("advisory", "")
+            except Exception as e:
+                logger.warning(f"Option shield advisory bypassed safely: {e}")
 
-        # 4. Loosely Coupled Confluence Advisory
-        oi_advisory = ""
-        try:
-            is_call = "CE" in trade_params["signal_type"].upper()
-            strike = risk_manager.get_atm_strike(trade_params["spot_price"], is_call)
-            oi_eval = option_chain_shield.evaluate_signal_confluence(
-                trade_params["signal_type"], 
-                trade_params["spot_price"], 
-                strike
-            )
-            oi_advisory = oi_eval.get("advisory", "")
-        except Exception as e:
-            logger.warning(f"Option shield advisory bypassed safely: {e}")
-
-        # 5. Execute via Paper Engine & Telegram Notification
-        trade_id = paper_engine.engine.process_entry(trade_params, oi_advisory=oi_advisory)
-        logger.info(f"✅ [AUTONOMOUS TRADE EXECUTED] Trade #{trade_id} {trade_params['symbol']} @ ₹{trade_params['entry_price']}")
+            # 5. Execute via Paper Engine & Telegram Notification
+            trade_id = paper_engine.engine.process_entry(trade_params, oi_advisory=oi_advisory)
+            if trade_id <= 0:
+                logger.warning(f"[SCANNER] Skipped duplicate entry attempt for {sig_type} (trade_id={trade_id})")
+                return
+            logger.info(f"✅ [AUTONOMOUS TRADE EXECUTED] Trade #{trade_id} {trade_params['symbol']} @ ₹{trade_params['entry_price']}")
 
     def start_scanner_thread(self):
         """Runs the native market scanner in a dedicated background daemon thread."""

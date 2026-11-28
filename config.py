@@ -9,6 +9,36 @@ from datetime import datetime, time
 from zoneinfo import ZoneInfo
 from typing import Optional
 
+
+def _load_dotenv(dotenv_path: Optional[str] = None) -> None:
+    """Load key=value pairs from .env without overriding existing process env."""
+    if dotenv_path is None:
+        if os.environ.get("IRON_BOT_TEST_MODE") == "1":
+            return
+        dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if not os.path.isfile(dotenv_path):
+        return
+    try:
+        with open(dotenv_path, "r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export "):].strip()
+                key, val = line.split("=", 1)
+                key = key.strip()
+                val = val.strip()
+                if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+                    val = val[1:-1]
+                if key:
+                    os.environ.setdefault(key, val)
+    except OSError:
+        pass
+
+
+_load_dotenv()
+
 # Timezone standard: Indian Standard Time (Asia/Kolkata)
 # Guaranteed IST consistency on local Mac and Render Cloud (UTC containers)
 IST_TIMEZONE = ZoneInfo("Asia/Kolkata")
@@ -37,7 +67,7 @@ INITIAL_WALLET_CAPITAL = 100000.0        # Strict ₹1,00,000 INR Starting Seed 
 CAMPAIGN_START_DATE = "2026-11-25"       # Fresh 30-Day Horizon Start Date
 CAMPAIGN_DURATION_DAYS = 30              # 30-Day Evaluation Campaign Window
 MAX_MARGIN_PER_TRADE_PCT = 0.50          # Max 50% wallet margin allocation per trade (₹50,000)
-CAPITAL_PRESERVATION_FLOOR = 35000.0     # Default fallback preservation floor (-30% max drawdown)
+CAPITAL_PRESERVATION_FLOOR = round(INITIAL_WALLET_CAPITAL * 0.70, 2)  # -30% max drawdown floor
 TARGET_ROI_PCT = 20.0                    # Institutional Target: +20.0% Net ROI in 30 days
 
 # =====================================================================
@@ -190,17 +220,24 @@ ENFORCE_OI_HARD_FILTER = False   # False = Advisory only (Safe). True = Rejects 
 # =====================================================================
 # 4. TELEGRAM NOTIFICATIONS
 # =====================================================================
-# Set your Telegram Bot Token & Chat ID here (or via environment variables)
-TELEGRAM_BOT_TOKEN = "9174695247:AAF8_OgNYFimH7Kk-MT0OEzioRnKaCJqbOk"
-TELEGRAM_CHAT_ID = "1651536670"
+# Credentials loaded strictly from environment / .env (no hardcoded secrets)
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 # =====================================================================
-# 5. DHANHQ BROKER INTEGRATION (LOOSELY COUPLED)
+# 5. DHANHQ BROKER INTEGRATION & RUNTIME SECURITY FLAGS
 # =====================================================================
-DHAN_CLIENT_ID = os.environ.get("DHAN_CLIENT_ID", "1105133010")
-DHAN_ACCESS_TOKEN = os.environ.get(
-    "DHAN_ACCESS_TOKEN", 
-    "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJ1c2VyUmVnaW9uIjoiUjEiLCJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiIiwiZXhwIjoxNzk0MzkwMzUwLCJpYXQiOjE3OTQzMDM5NTAsInRva2VuQ29uc3VtZXJUeXBlIjoiU0VMRiIsIndlYmhvb2tVcmwiOiIiLCJkaGFuQ2xpZW50SWQiOiIxMTA1MTMzMDEwIn0.3-C5AO8mcjrJi5IAFRxnN9730GFgoge9FDMjtHSzbSgj0xrugRl8psr_clBtuGZyDJN2gqiP1nLR4xUmGa25tA"
-)
-ENABLE_DHAN_BROKER = True
+DHAN_CLIENT_ID = os.environ.get("DHAN_CLIENT_ID", "")
+DHAN_ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN", "")
+ENABLE_DHAN_BROKER = os.environ.get("ENABLE_DHAN_BROKER", "1") == "1"
+
+EC2_PUBLIC_IP = os.environ.get("EC2_PUBLIC_IP", "3.104.77.17")
+WEBHOOK_SECRET = os.environ.get("IRON_BOT_SECRET", "")
+ALLOW_LIVE_ORDERS = os.environ.get("ALLOW_LIVE_ORDERS", "0") == "1"
+
+# Quote freshness & monitor safety thresholds
+MAX_QUOTE_AGE_SECONDS = float(os.environ.get("MAX_QUOTE_AGE_SECONDS", "20.0"))
+MONITOR_QUOTE_TTL_SECONDS = float(os.environ.get("MONITOR_QUOTE_TTL_SECONDS", "5.0"))
+GLITCH_MAX_CONSECUTIVE = int(os.environ.get("GLITCH_MAX_CONSECUTIVE", "3"))
+ALLOW_SIMULATED_ENTRY = os.environ.get("ALLOW_SIMULATED_ENTRY", "0") == "1"
 

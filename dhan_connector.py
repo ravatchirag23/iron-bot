@@ -23,10 +23,11 @@ logger = logging.getLogger("IronBot.Dhan")
 DHAN_BASE_URL = "https://api.dhan.co/v2"
 DHAN_AUTH_URL = "https://auth.dhan.co/app"
 
-# SSL context for universal certificate handling
+# SSL context for universal certificate handling (verified TLS by default)
 _ssl_ctx = ssl.create_default_context()
-_ssl_ctx.check_hostname = False
-_ssl_ctx.verify_mode = ssl.CERT_NONE
+if os.environ.get("IRON_BOT_INSECURE_SSL") == "1":
+    _ssl_ctx.check_hostname = False
+    _ssl_ctx.verify_mode = ssl.CERT_NONE
 
 
 def get_current_token() -> str:
@@ -185,6 +186,10 @@ def route_order_to_broker(trade_params: Dict[str, Any]) -> Dict[str, Any]:
             "message": "Order held in virtual engine. Dhan live order bypassed per Canary Rule.",
             "broker_order_id": f"VIRTUAL_{config.get_today_ist()}_{trade_params.get('trade_id', 1)}"
         }
+
+    if not getattr(config, "ALLOW_LIVE_ORDERS", False):
+        logger.error("[DHAN LIVE] ORDER BLOCKED: exit/SL routing not implemented (set IRON_BOT_ALLOW_LIVE_ORDERS=1 only after full exit routing).")
+        return {"routed": False, "mode": "LIVE_BLOCKED", "error": "Live routing disabled by safety switch"}
 
     # Live Mode Execution (Requires explicit opt-in and Static IP on Dhan)
     logger.warning("[DHAN LIVE] Attempting live order routing...")
