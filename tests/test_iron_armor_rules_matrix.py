@@ -199,9 +199,12 @@ class TestDailyLimitsAndLocks(unittest.TestCase):
         conn = database.get_connection()
         c = conn.cursor()
         c.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
+        if "iron_bot_unit_tests" in database.get_db_path():
+            c.execute("DELETE FROM trades")
         c.execute("DELETE FROM audit_logs")
         conn.commit()
         conn.close()
+        database.init_campaign_wallet(100000.0)
 
     def tearDown(self):
         database.reset_daily_limits()
@@ -554,9 +557,12 @@ class TestTrendShieldAndWalletCaps(unittest.TestCase):
         conn = database.get_connection()
         c = conn.cursor()
         c.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
+        if "iron_bot_unit_tests" in database.get_db_path():
+            c.execute("DELETE FROM trades")
         c.execute("DELETE FROM audit_logs")
         conn.commit()
         conn.close()
+        database.init_campaign_wallet(100000.0)
 
     def tearDown(self):
         database.reset_daily_limits()

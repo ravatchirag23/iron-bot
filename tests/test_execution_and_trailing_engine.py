@@ -47,7 +47,10 @@ class TestOrderEntryAndFills(unittest.TestCase):
         database.reset_daily_limits()
         conn = database.get_connection()
         c = conn.cursor()
-        c.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
+        if "iron_bot_unit_tests" in database.get_db_path():
+            c.execute("DELETE FROM trades")
+        else:
+            c.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
         conn.commit()
         conn.close()
         paper_engine.engine.sync_state()
@@ -188,7 +191,10 @@ class TestStopLossAndSlippageExecution(unittest.TestCase):
         database.reset_daily_limits()
         conn = database.get_connection()
         c = conn.cursor()
-        c.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
+        if "iron_bot_unit_tests" in database.get_db_path():
+            c.execute("DELETE FROM trades")
+        else:
+            c.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
         conn.commit()
         conn.close()
         paper_engine.engine.sync_state()
@@ -370,7 +376,10 @@ class TestUniversalTrailingAndRunnerPromotion(unittest.TestCase):
         database.reset_daily_limits()
         conn = database.get_connection()
         c = conn.cursor()
-        c.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
+        if "iron_bot_unit_tests" in database.get_db_path():
+            c.execute("DELETE FROM trades")
+        else:
+            c.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
         conn.commit()
         conn.close()
         paper_engine.engine.sync_state()
@@ -621,7 +630,10 @@ class TestRatchetTrailingLeashAndReversals(unittest.TestCase):
         database.reset_daily_limits()
         conn = database.get_connection()
         c = conn.cursor()
-        c.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
+        if "iron_bot_unit_tests" in database.get_db_path():
+            c.execute("DELETE FROM trades")
+        else:
+            c.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
         conn.commit()
         conn.close()
         paper_engine.engine.sync_state()

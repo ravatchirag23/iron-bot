@@ -30,9 +30,13 @@ class TestAuditFixes(unittest.TestCase):
         conn = database.get_connection()
         cursor = conn.cursor()
         cursor.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
-        cursor.execute("DELETE FROM trades WHERE symbol LIKE '%AUDIT_FIX%'")
+        if "iron_bot_unit_tests" in database.get_db_path():
+            cursor.execute("DELETE FROM trades")
+        else:
+            cursor.execute("DELETE FROM trades WHERE symbol LIKE '%AUDIT_FIX%'")
         conn.commit()
         conn.close()
+        database.init_campaign_wallet(100000.0)
         paper_engine.engine.sync_state()
 
     def tearDown(self):

@@ -1,0 +1,39 @@
+{
+  "protect-audit-gates": {
+    "PreToolUse": [
+      {
+        "matcher": "write_file|edit_file|write_to_file|replace_file_content|multi_replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/protect-gates.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "post-edit-static-check": {
+    "PostToolUse": [
+      {
+        "matcher": "write_file|edit_file|write_to_file|replace_file_content|multi_replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/post-edit-check.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
+  "stop-verification-gate": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "./scripts/stop-verify-gate.sh",
+        "timeout": 180
+      }
+    ]
+  }
+}

@@ -36,6 +36,11 @@ class TestDatabaseConfigurationAndOverrides(unittest.TestCase):
 
     def tearDown(self):
         database.reset_daily_limits()
+        if "iron_bot_unit_tests" in database.get_db_path():
+            conn = database.get_connection()
+            conn.cursor().execute("DELETE FROM trades")
+            conn.commit()
+            conn.close()
         self._patcher.stop()
 
     def test_schema_initialization(self):
@@ -193,6 +198,11 @@ class TestDailyTrackerAndLedgerSummary(unittest.TestCase):
 
     def tearDown(self):
         database.reset_daily_limits()
+        if "iron_bot_unit_tests" in database.get_db_path():
+            conn = database.get_connection()
+            conn.cursor().execute("DELETE FROM trades")
+            conn.commit()
+            conn.close()
         self._patcher.stop()
 
     def test_today_stats_date_format(self):
