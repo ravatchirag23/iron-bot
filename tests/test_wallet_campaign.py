@@ -10,6 +10,11 @@ import os
 # Add root project dir to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import tempfile
+os.environ["IRON_BOT_TEST_MODE"] = "1"
+if "IRON_BOT_DB_PATH" not in os.environ:
+    os.environ["IRON_BOT_DB_PATH"] = os.path.join(tempfile.gettempdir(), "iron_bot_unit_tests.db")
+
 import config
 import database
 import risk_manager

@@ -256,9 +256,10 @@ def set_today_loss_limit(limit: float, target_date: Optional[str] = None):
     unlock_system_today(target_date)
     log_event("LOSS_LIMIT_OVERRIDE", f"Daily loss limit set to ₹{limit} for {target_date}")
 
-def set_max_sl_points(points: float):
+def set_max_sl_points(points: Optional[float]):
     """Sets a per-trade SL points override (e.g. 10.0 or 12.0 pts to reduce per-trade loss)."""
-    set_config("max_sl_points_override", str(points))
+    val = str(points) if points is not None else None
+    set_config("max_sl_points_override", val)
     log_event("SL_CAP_OVERRIDE", f"Per-trade Micro-SL point ceiling set to {points} pts")
 
 def set_universal_trailing(enabled: bool):
@@ -325,6 +326,7 @@ def reset_daily_limits(today_str: Optional[str] = None):
         cursor.execute("DELETE FROM daily_tracker WHERE trade_date = ?", (today_str,))
         cursor.execute("UPDATE trades SET status = 'CLOSED' WHERE status = 'ACTIVE'")
         cursor.execute("DELETE FROM system_config WHERE key IN ('max_trades_override_date', 'max_trades_override_value', 'max_loss_override_date', 'max_loss_override_value', 'max_sl_points_override', 'enable_universal_trailing')")
+        cursor.execute("DELETE FROM audit_logs")
 
 def get_wallet_stats() -> Dict[str, Any]:
     """

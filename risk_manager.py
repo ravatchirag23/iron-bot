@@ -196,7 +196,11 @@ def calculate_dynamic_greek_brackets(entry_premium: float, delta: float = 0.50, 
     spot_noise_distance = max(18.0, spot_atr * multiplier * vix_scale)
     
     # 2. Option SL Distance via Buchanan Taylor Expansion (Slide 50)
-    abs_delta = max(0.20, min(0.95, abs(delta)))
+    delta_val = 0.50 if (delta is None or str(delta) == 'nan') else delta
+    try:
+        abs_delta = max(0.20, min(0.95, abs(float(delta_val))))
+    except (ValueError, TypeError):
+        abs_delta = 0.50
     
     # Theoretical option drop = |Delta| * ΔS_stop + Half-Spread Buffer (0.75 pts)
     sl_points_raw = (abs_delta * spot_noise_distance) + (config.BID_ASK_FRICTION_POINTS / 2.0)
